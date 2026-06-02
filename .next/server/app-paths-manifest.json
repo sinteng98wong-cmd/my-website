@@ -1,0 +1,14 @@
+{
+  "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js",
+  "/api/hr/schedule/route": "app/api/hr/schedule/route.js",
+  "/api/hr/shifts/route": "app/api/hr/shifts/route.js",
+  "/api/hr/schedule/copy-week/route": "app/api/hr/schedule/copy-week/route.js",
+  "/api/hr/schedule/generate/route": "app/api/hr/schedule/generate/route.js",
+  "/(portal)/reports/page": "app/(portal)/reports/page.js",
+  "/(portal)/patients/page": "app/(portal)/patients/page.js",
+  "/(portal)/appointments/page": "app/(portal)/appointments/page.js",
+  "/(portal)/schedule/page": "app/(portal)/schedule/page.js",
+  "/(portal)/lab/page": "app/(portal)/lab/page.js",
+  "/(portal)/dashboard/page": "app/(portal)/dashboard/page.js",
+  "/(portal)/hr/schedule/page": "app/(portal)/hr/schedule/page.js"
+}

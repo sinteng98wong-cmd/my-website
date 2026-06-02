@@ -1,0 +1,13 @@
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
+import { redirect } from "next/navigation";
+import { getUserClinics } from "@/lib/selected-clinic";
+import { AttendanceClient } from "./AttendanceClient";
+
+export default async function AttendancePage() {
+  const session = await getServerSession(authOptions);
+  const role = (session?.user as any)?.role as string;
+  if (!["SUPER_ADMIN", "CLINIC_MANAGER"].includes(role)) redirect("/dashboard");
+  const clinics = await getUserClinics();
+  return <AttendanceClient clinics={clinics.map(c => ({ id: c.id, name: c.name }))} />;
+}

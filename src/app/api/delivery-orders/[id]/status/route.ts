@@ -1,0 +1,127 @@
+import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
+import { z } from "zod";
+import { deductStock, receiveStock } from "@/lib/stock";
+
+const Schema = z.object({
+  status: z.enum(["PENDING", "APPROVED", "DRAFT", "IN_TRANSIT", "RECEIVED", "INVOICED"]),
+});
+
+export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+  const session = await getServerSession(authOptions);
+  if (!session?.user) return NextResponse.json({ error: "Unauthenticated" }, { status: 401 });
+  const role = (session.user as any).role as string;
+  const userId = (session.user as any).id as string;
+
+  const order = await prisma.deliveryOrder.findUnique({
+    where: { id: params.id },
+    include: {
+      lines: true,
+      fromClinic: { include: { entity: { select: { id: true } } } },
+    },
+  });
+  if (!order) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const body = await req.json().catch(() => null);
+  const parsed = Schema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: "Validation failed", issues: parsed.error.flatten() }, { status: 422 });
+  }
+
+  const { status: newStatus } = parsed.data;
+  const current = order.status;
+
+  const isFromClinicUser = role === "SUPER_ADMIN" ? true : await prisma.userClinic.findFirst({
+    where: { userId, clinicId: order.fromClinicId },
+  }).then(Boolean);
+
+  const isToClinicUser = role === "SUPER_ADMIN" ? true : await prisma.userClinic.findFirst({
+    where: { userId, clinicId: order.toClinicId },
+  }).then(Boolean);
+
+  // DRAFT → PENDING
+  if (newStatus === "PENDING") {
+    if (current !== "DRAFT") return NextResponse.json({ error: `Cannot submit from ${current}` }, { status: 400 });
+    if (!["SUPER_ADMIN", "CLINIC_MANAGER", "STOREKEEPER"].includes(role) || !isFromClinicUser) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const updated = await prisma.deliveryOrder.update({ where: { id: params.id }, data: { status: "PENDING" } });
+    return NextResponse.json(updated);
+  }
+
+  // PENDING → APPROVED
+  if (newStatus === "APPROVED") {
+    if (current !== "PENDING") return NextResponse.json({ error: `Cannot approve from ${current}` }, { status: 400 });
+    if (!["SUPER_ADMIN", "CLINIC_MANAGER"].includes(role) || !isFromClinicUser) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const updated = await prisma.deliveryOrder.update({
+      where: { id: params.id },
+      data: { status: "APPROVED", approvedById: userId, approvedAt: new Date() },
+    });
+    return NextResponse.json(updated);
+  }
+
+  // PENDING → DRAFT (reject)
+  if (newStatus === "DRAFT" && current === "PENDING") {
+    if (!["SUPER_ADMIN", "CLINIC_MANAGER"].includes(role) || !isFromClinicUser) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const updated = await prisma.deliveryOrder.update({ where: { id: params.id }, data: { status: "DRAFT" } });
+    return NextResponse.json(updated);
+  }
+
+  // APPROVED → IN_TRANSIT
+  if (newStatus === "IN_TRANSIT") {
+    if (current !== "APPROVED") return NextResponse.json({ error: `Cannot dispatch from ${current}` }, { status: 400 });
+    if (!["SUPER_ADMIN", "CLINIC_MANAGER", "STOREKEEPER"].includes(role) || !isFromClinicUser) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    await deductStock(order.fromClinicId, order.lines.map((l) => ({ itemId: l.itemId, quantity: l.quantity })));
+    const updated = await prisma.deliveryOrder.update({
+      where: { id: params.id },
+      data: { status: "IN_TRANSIT", dispatchedAt: new Date() },
+    });
+    return NextResponse.json(updated);
+  }
+
+  // IN_TRANSIT → RECEIVED
+  if (newStatus === "RECEIVED") {
+    if (current !== "IN_TRANSIT") return NextResponse.json({ error: `Cannot receive from ${current}` }, { status: 400 });
+    if (!["SUPER_ADMIN", "CLINIC_MANAGER", "STOREKEEPER"].includes(role) || !isToClinicUser) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const receiveLines = order.lines.map((l) => ({
+      itemId:      l.itemId,
+      receivedQty: l.receivedQty ?? l.quantity,
+      unitCost:    Number(l.unitCost),
+      batchNumber: l.batchNumber ?? null,
+      expiryDate:  l.expiryDate  ?? null,
+      doLineId:    l.id,
+    }));
+    await receiveStock(order.toClinicId, receiveLines);
+
+    const hasDiscrepancy = order.lines.some(
+      (l) => l.receivedQty !== null && l.receivedQty !== l.quantity
+    );
+    const updated = await prisma.deliveryOrder.update({
+      where: { id: params.id },
+      data: { status: "RECEIVED", receivedAt: new Date() },
+    });
+    return NextResponse.json({ ...updated, hasDiscrepancy });
+  }
+
+  // RECEIVED → INVOICED
+  if (newStatus === "INVOICED") {
+    if (current !== "RECEIVED") return NextResponse.json({ error: `Cannot invoice from ${current}` }, { status: 400 });
+    if (!["SUPER_ADMIN", "FINANCE"].includes(role)) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const updated = await prisma.deliveryOrder.update({ where: { id: params.id }, data: { status: "INVOICED" } });
+    return NextResponse.json(updated);
+  }
+
+  return NextResponse.json({ error: "Invalid transition" }, { status: 400 });
+}

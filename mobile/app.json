@@ -1,0 +1,14 @@
+{
+  "expo": {
+    "name": "DentalOS",
+    "slug": "dentalos",
+    "version": "1.0.0",
+    "scheme": "dentalos",
+    "platforms": ["ios", "android"],
+    "icon": "./assets/icon.png",
+    "splash": { "resizeMode": "contain", "backgroundColor": "#F8FAFC" },
+    "ios": { "supportsTablet": true, "bundleIdentifier": "com.dentalos.app" },
+    "android": { "package": "com.dentalos.app", "adaptiveIcon": { "backgroundColor": "#F8FAFC" } },
+    "plugins": ["expo-router", "expo-secure-store"]
+  }
+}
