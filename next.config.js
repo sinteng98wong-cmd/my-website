@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   experimental: {
-    serverComponentsExternalPackages: ["@prisma/client"],
+    serverComponentsExternalPackages: ["@prisma/client", "pdfmake"],
   },
   // Exclude the Expo mobile app from Next.js compilation
   webpack(config) {

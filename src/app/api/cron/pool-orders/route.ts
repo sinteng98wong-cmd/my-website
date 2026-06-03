@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { Resend } from "resend";
 import { format, differenceInHours } from "date-fns";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
 export async function GET(req: NextRequest) {
   if (req.headers.get("x-cron-secret") !== process.env.CRON_SECRET) {
@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
       .filter((uc) => uc.user.role === "CLINIC_MANAGER" || uc.user.role === "SUPER_ADMIN")
       .map((uc) => uc.user.email);
 
-    if (managers.length > 0) {
+    if (managers.length > 0 && resend) {
       const total = pool.lines.reduce((s, l) => s + Number(l.unitCost) * l.totalQty, 0);
       await resend.emails.send({
         from: "DentalOS <no-reply@dentalos.my>",
@@ -81,7 +81,7 @@ export async function GET(req: NextRequest) {
       .filter((uc) => uc.user.role === "CLINIC_MANAGER" || uc.user.role === "SUPER_ADMIN")
       .map((uc) => uc.user.email);
 
-    if (managers.length > 0 && pool.deadline) {
+    if (managers.length > 0 && pool.deadline && resend) {
       const hoursRemaining = Math.max(0, differenceInHours(pool.deadline, now));
       const total = pool.lines.reduce((s, l) => s + Number(l.unitCost) * l.totalQty, 0);
       const moq = Number(pool.moqTarget);
