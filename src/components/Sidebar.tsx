@@ -60,10 +60,11 @@ const NAV: NavEntry[] = [
     label:  "Finance",
     module: "invoices",
     children: [
-      { key: "invoices",   label: "Invoices",     href: "/invoices"    },
-      { key: "ledger",     label: "Daily Ledger", href: "/ledger"      },
-      { key: "commission", label: "Commission",   href: "/commission"  },
-      { key: "reports",    label: "Reports",      href: "/reports"     },
+      { key: "invoices",         label: "Invoices",        href: "/invoices"          },
+      { key: "ledger",           label: "Daily Ledger",    href: "/ledger"            },
+      { key: "commission",       label: "Commission",      href: "/commission"        },
+      { key: "payment-vouchers", label: "Payment Vouchers", href: "/payment-vouchers", financeVisible: true },
+      { key: "reports",          label: "Reports",         href: "/reports"           },
     ],
   },
 
@@ -123,11 +124,14 @@ const NAV: NavEntry[] = [
     key:   "admin",
     label: "Admin",
     children: [
+      { key: "companies",   label: "Companies",            href: "/admin/companies",        superAdminOnly: true },
       { key: "users",       label: "Users",           href: "/users",                  superAdminOnly: true },
       { key: "patient-src", label: "Patient Sources",  href: "/admin/patient-sources",  superAdminOnly: true },
-      { key: "config",      label: "Settings",         href: "/config"              },
-      { key: "suppliers",   label: "Suppliers",        href: "/inventory/suppliers" },
-      { key: "categories",  label: "Categories",       href: "/inventory/categories"},
+      { key: "expense-cat", label: "Expense Categories", href: "/admin/expense-categories", superAdminOnly: true },
+      { key: "einvoice",    label: "e-Invoice",        href: "/admin/einvoice",          financeVisible: true },
+      { key: "config",      label: "Settings",   href: "/config"               },
+      { key: "suppliers",   label: "Suppliers",  href: "/admin/suppliers"      },
+      { key: "categories",  label: "Categories", href: "/inventory/categories" },
     ],
   },
 ];
@@ -160,6 +164,7 @@ export function Sidebar({ clinics, selectedClinicId, allowedModules, effectiveRo
     if (isSuperAdmin) return true;
     if (child.superAdminOnly) return false;
     if (child.managerOnly) return ["CLINIC_MANAGER"].includes(role);
+    if (child.financeVisible) return ["FINANCE", "CLINIC_MANAGER"].includes(role);
     return true;
   }
 
