@@ -6,8 +6,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 // ── Org ──────────────────────────────────────────────────────────────────
@@ -19,8 +20,65 @@ model Entity {
   eInvoiceEnabled Boolean  @default(false)
   panelEnabled    Boolean  @default(false)
   sstOnForeigner  Boolean  @default(false)
+
+  // Company identity
+  name                  String?
+  tradingName           String?
+  registrationNo        String?
+  oldRegistrationNo     String?
+  incorporationDate     DateTime?
+
+  // Address
+  address   String?
+  city      String?
+  state     String?
+  postcode  String?
+  country   String    @default("Malaysia")
+
+  // Contact
+  phone    String?
+  email    String?
+  website  String?
+  logoUrl  String?
+
+  // Financial Year
+  financialYearStartMonth Int @default(1)
+
+  // SST
+  sstRegistrationNo  String?
+  sstEffectiveDate   DateTime?
+  sstFilingFrequency String    @default("BI_MONTHLY")
+
+  // e-Invoice
+  tin                   String?
+  myInvoisClientId      String?
+  myInvoisClientSecret  String?
+  myInvoisEnvironment   String   @default("SANDBOX")
+  eInvoiceEffectiveDate DateTime?
+
+  // Director
+  directorName String?
+  directorIcNo String?
+
+  // Bank account (used when pvMode = GROUPED — shared across all branches)
+  bankName        String?
+  bankAccountNo   String?
+  bankAccountName String?
+
+  // PV mode: GROUPED = one PV for all branches sharing same bank account
+  //          PER_CLINIC = separate PV per branch using each branch's bank account
+  pvMode String @default("PER_CLINIC")
+
+  // Status
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   clinics         Clinic[]
   stockInvoices   StockInvoice[]
+  eInvoiceBatches EInvoiceBatch[]
+
+  @@index([isActive])
 }
 
 model Clinic {
@@ -66,6 +124,38 @@ model Clinic {
   staffMinimums        ClinicStaffMinimum[]
   patientDeposits      PatientDeposit[]
   salesReturns         SalesReturn[]
+  eInvoiceBatches      EInvoiceBatch[]
+  creditNotes          EInvoiceCreditNote[]
+  debitNotes           EInvoiceDebitNote[]
+
+  // Branch contact info
+  address    String?
+  city       String?
+  state      String?
+  postcode   String?
+  phone      String?
+  email      String?
+
+  // Branch bank account (used when entity pvMode = PER_CLINIC)
+  bankName       String?
+  bankAccountNo  String?
+  bankAccountName String?
+
+  // PV grouping tag — branches with same tag share one PV (entity pvMode = GROUPED)
+  pvGroupTag String?
+
+  // Payment Voucher approvers
+  directorId String?
+  director   User?   @relation("ClinicDirector", fields: [directorId], references: [id])
+  picId      String?
+  pic        User?   @relation("ClinicPic", fields: [picId], references: [id])
+
+  // Payment Voucher relations
+  paymentVouchers      PaymentVoucher[]
+  interBranchPVs       PaymentVoucher[]  @relation("InterBranchFrom")
+  supplierInvoicesFrom SupplierInvoice[] @relation("SupplierInvoiceFromClinic")
+
+  @@index([entityId])
 }
 
 model PanelProvider {
@@ -76,6 +166,9 @@ model PanelProvider {
   code            String
   active          Boolean          @default(true)
   invoicePayments InvoicePayment[]
+  tin             String?
+  registrationNo  String?
+  eInvoiceBatches EInvoiceBatch[]
 }
 
 // ── Users ────────────────────────────────────────────────────────────────
@@ -138,6 +231,18 @@ model User {
   employmentActions             EmploymentHistory[] @relation("EmploymentHistoryPerformer")
   depositTransactions           PatientDeposit[]   @relation("DepositCreator")
   salesReturnCreations          SalesReturn[]      @relation("SalesReturnCreator")
+  submittedBatches              EInvoiceBatch[]    @relation("BatchSubmitter")
+  createdCNs                    EInvoiceCreditNote[] @relation("CNCreator")
+  createdDNs                    EInvoiceDebitNote[]  @relation("DNCreator")
+  // Clinic approver relations
+  directorOfClinics   Clinic[] @relation("ClinicDirector")
+  picOfClinics        Clinic[] @relation("ClinicPic")
+  // Payment Voucher relations
+  preparedPVs         PaymentVoucher[] @relation("PVPrepared")
+  directorApprovedPVs PaymentVoucher[] @relation("PVDirectorApproved")
+  picApprovedPVs      PaymentVoucher[] @relation("PVPicApproved")
+  rejectedPVs         PaymentVoucher[] @relation("PVRejected")
+  paidPVs             PaymentVoucher[] @relation("PVPaid")
   createdAt          DateTime       @default(now())
 }
 
@@ -542,7 +647,8 @@ model LabJob {
   paidToVendor    Boolean      @default(false)
   paidDate        DateTime?
   notes           String?
-  treatments      Treatment[]
+  treatments       Treatment[]
+  supplierInvoices SupplierInvoice[]
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
   @@index([clinicId, status])
@@ -585,7 +691,20 @@ model Invoice {
   total       Decimal          @db.Decimal(10,2)
   payments      InvoicePayment[]
   collectedAt   DateTime?
-  eInvoiceRef   String?
+  eInvoiceRef           String?
+  eInvoiceStatus        String?
+  eInvoiceUUID          String?
+  eInvoiceLongId        String?
+  eInvoiceType          String?
+  eInvoiceQrUrl         String?
+  eInvoiceSubmittedAt   DateTime?
+  eInvoiceValidatedAt   DateTime?
+  eInvoiceCancelledAt   DateTime?
+  eInvoiceCancelReason  String?
+  consolidatedBatchId   String?
+  consolidatedBatch     EInvoiceBatch?       @relation("BatchInvoices", fields: [consolidatedBatchId], references: [id])
+  creditNotes           EInvoiceCreditNote[] @relation("OriginalInvoice")
+  debitNotes            EInvoiceDebitNote[]  @relation("OriginalInvoice")
   referralCommissions ReferralCommission[]
   depositUtilizations PatientDeposit[]     @relation("DepositUtilizationInvoice")
   salesReturns        SalesReturn[]        @relation("SalesReturnOriginalInvoice")
@@ -772,6 +891,11 @@ model Supplier {
   batches       StockBatch[]
   payments      SupplierPayment[]
   purchaseOrders PurchaseOrder[]  @relation("POSupplier")
+  pvs            PaymentVoucher[]
+  registrationNo String?
+  bankName       String?
+  accountNo      String?
+  accountName    String?
   createdAt     DateTime         @default(now())
 }
 
@@ -914,7 +1038,8 @@ model StockInvoice {
   totalAmount     Decimal         @db.Decimal(10,2)
   sst             Decimal         @default(0) @db.Decimal(10,2)
   eInvoiceRef     String?
-  deliveryOrders  DeliveryOrder[]
+  deliveryOrders     DeliveryOrder[]
+  pvSupplierInvoices SupplierInvoice[]
   issuedAt        DateTime?
   createdAt       DateTime        @default(now())
   @@index([month])
@@ -964,6 +1089,7 @@ model PoolOrder {
   lines              PoolOrderLine[]
   participants       PoolParticipant[]
   deliveryOrders     DeliveryOrder[]
+  pvSupplierInvoices SupplierInvoice[]
   createdAt          DateTime          @default(now())
   updatedAt          DateTime          @updatedAt
 
@@ -1202,6 +1328,7 @@ model RoleModuleConfig {
   id        String   @id @default(cuid())
   role      String
   module    String
+  enabled   Boolean  @default(true)
   actions   String   @default("[]") // JSON: ["view","create","edit","delete","export","approve"]
   updatedAt DateTime @updatedAt
   updatedBy String?
@@ -1813,4 +1940,202 @@ model ClinicStaffMinimum {
   minCount  Int     @default(1)
   @@unique([clinicId, role])
   @@index([clinicId])
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// e-INVOICE MODULE (MyInvois / LHDN Malaysia)
+// ════════════════════════════════════════════════════════════════════════
+
+enum EInvoiceBatchType {
+  CONSOLIDATED
+  PANEL_CONSOLIDATED
+}
+
+enum EInvoiceBatchStatus {
+  PENDING
+  SUBMITTED
+  VALID
+  PARTIAL
+  INVALID
+}
+
+model EInvoiceBatch {
+  id              String              @id @default(cuid())
+  batchRef        String              @unique
+  clinicId        String
+  clinic          Clinic              @relation(fields: [clinicId], references: [id])
+  entityId        String
+  entity          Entity              @relation(fields: [entityId], references: [id])
+  batchType       EInvoiceBatchType
+  panelProviderId String?
+  panelProvider   PanelProvider?      @relation(fields: [panelProviderId], references: [id])
+  month           String
+  totalAmount     Decimal             @db.Decimal(12,2)
+  totalSst        Decimal             @default(0) @db.Decimal(12,2)
+  invoiceCount    Int                 @default(0)
+  status          EInvoiceBatchStatus @default(PENDING)
+  myInvoisUUID    String?
+  myInvoisLongId  String?
+  submittedAt     DateTime?
+  validatedAt     DateTime?
+  submittedById   String?
+  submittedBy     User?               @relation("BatchSubmitter", fields: [submittedById], references: [id])
+  rawRequest      Json?
+  rawResponse     Json?
+  errorMessage    String?
+  invoices        Invoice[]           @relation("BatchInvoices")
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  @@index([clinicId, month])
+  @@index([entityId, month])
+  @@index([status])
+}
+
+model EInvoiceCreditNote {
+  id                String    @id @default(cuid())
+  cnRef             String    @unique
+  originalInvoiceId String
+  originalInvoice   Invoice   @relation("OriginalInvoice", fields: [originalInvoiceId], references: [id])
+  clinicId          String
+  clinic            Clinic    @relation(fields: [clinicId], references: [id])
+  reason            String
+  amount            Decimal   @db.Decimal(10,2)
+  myInvoisUUID      String?
+  myInvoisLongId    String?
+  status            String    @default("PENDING")
+  submittedAt       DateTime?
+  validatedAt       DateTime?
+  rawRequest        Json?
+  rawResponse       Json?
+  createdById       String?
+  createdBy         User?     @relation("CNCreator", fields: [createdById], references: [id])
+  createdAt         DateTime  @default(now())
+  @@index([originalInvoiceId])
+  @@index([clinicId])
+}
+
+model EInvoiceDebitNote {
+  id                String    @id @default(cuid())
+  dnRef             String    @unique
+  originalInvoiceId String
+  originalInvoice   Invoice   @relation("OriginalInvoice", fields: [originalInvoiceId], references: [id])
+  clinicId          String
+  clinic            Clinic    @relation(fields: [clinicId], references: [id])
+  reason            String
+  amount            Decimal   @db.Decimal(10,2)
+  myInvoisUUID      String?
+  myInvoisLongId    String?
+  status            String    @default("PENDING")
+  submittedAt       DateTime?
+  validatedAt       DateTime?
+  rawRequest        Json?
+  rawResponse       Json?
+  createdById       String?
+  createdBy         User?     @relation("DNCreator", fields: [createdById], references: [id])
+  createdAt         DateTime  @default(now())
+  @@index([originalInvoiceId])
+  @@index([clinicId])
+}
+
+// ── Payment Vouchers ──────────────────────────────────────────────────────
+
+enum PVStatus {
+  DRAFT
+  PENDING_DIRECTOR
+  PENDING_PIC
+  APPROVED
+  PAID
+  REJECTED
+}
+
+enum SupplierInvoiceType {
+  GENERAL
+  LAB
+  MATERIALS
+  INTERBRANCH
+}
+
+model ExpenseCategory {
+  id          String            @id @default(cuid())
+  name        String            @unique
+  description String?
+  isActive    Boolean           @default(true)
+  order       Int               @default(0)
+  invoices    SupplierInvoice[]
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  @@index([isActive])
+}
+
+model PaymentVoucher {
+  id                   String      @id @default(cuid())
+  pvRef                String      @unique
+  clinicId             String
+  clinic               Clinic      @relation(fields: [clinicId], references: [id])
+  supplierId           String?
+  supplier             Supplier?   @relation(fields: [supplierId], references: [id])
+  fromClinicId         String?
+  fromClinic           Clinic?     @relation("InterBranchFrom", fields: [fromClinicId], references: [id])
+  status               PVStatus    @default(DRAFT)
+  totalAmount          Decimal     @db.Decimal(12,2)
+  bankName             String?
+  accountNo            String?
+  accountName          String?
+  paymentRef           String?
+  paymentDate          DateTime?
+  notes                String?
+  preparedById         String?
+  preparedBy           User?       @relation("PVPrepared", fields: [preparedById], references: [id])
+  submittedAt          DateTime?
+  directorId           String?
+  directorApprovedById String?
+  directorApprovedBy   User?       @relation("PVDirectorApproved", fields: [directorApprovedById], references: [id])
+  directorApprovedAt   DateTime?
+  directorNote         String?
+  picId                String?
+  picApprovedById      String?
+  picApprovedBy        User?       @relation("PVPicApproved", fields: [picApprovedById], references: [id])
+  picApprovedAt        DateTime?
+  picNote              String?
+  rejectedById         String?
+  rejectedBy           User?       @relation("PVRejected", fields: [rejectedById], references: [id])
+  rejectedAt           DateTime?
+  rejectionReason      String?
+  paidById             String?
+  paidBy               User?       @relation("PVPaid", fields: [paidById], references: [id])
+  paidAt               DateTime?
+  invoices             SupplierInvoice[]
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+  @@index([clinicId, status])
+  @@index([supplierId])
+  @@index([status])
+}
+
+model SupplierInvoice {
+  id             String              @id @default(cuid())
+  pvId           String
+  pv             PaymentVoucher      @relation(fields: [pvId], references: [id])
+  invoiceType    SupplierInvoiceType @default(GENERAL)
+  invoiceNo      String
+  invoiceDate    DateTime
+  description    String
+  amount         Decimal             @db.Decimal(10,2)
+  categoryId     String?
+  category       ExpenseCategory?    @relation(fields: [categoryId], references: [id])
+  attachmentUrl  String?
+  attachmentName String?
+  labJobId       String?
+  labJob         LabJob?             @relation(fields: [labJobId], references: [id])
+  stockInvoiceId String?
+  stockInvoice   StockInvoice?       @relation(fields: [stockInvoiceId], references: [id])
+  poolOrderId    String?
+  poolOrder      PoolOrder?          @relation(fields: [poolOrderId], references: [id])
+  fromClinicId   String?
+  fromClinic     Clinic?             @relation("SupplierInvoiceFromClinic", fields: [fromClinicId], references: [id])
+  notes          String?
+  createdAt      DateTime            @default(now())
+  @@index([pvId])
+  @@index([labJobId])
+  @@index([stockInvoiceId])
 }
