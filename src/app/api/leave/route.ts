@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
       where.fromDate = { gte: new Date(y, m - 1, 1), lt: new Date(y, m, 1) };
     }
 
-    const leaves = await prisma.staffLeave.findMany({
+    const leaves = await (prisma as any).staffLeave.findMany({
       where,
       include: {
         staff:      { select: { name: true, role: true } },
@@ -60,10 +60,10 @@ export async function POST(req: NextRequest) {
       (to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24)
     ) + 1);
 
-    const count = await prisma.staffLeave.count();
+    const count = await (prisma as any).staffLeave.count();
     const leaveRef = `LV-${String(count + 1).padStart(5, "0")}`;
 
-    const leave = await prisma.staffLeave.create({
+    const leave = await (prisma as any).staffLeave.create({
       data: {
         leaveRef, staffId: userId, clinicId, leaveType,
         fromDate: from, toDate: to, days,

@@ -111,7 +111,7 @@ export default async function StockInvoicesPage() {
                 {uninvoicedDOs.map((do_) => {
                   const value = do_.lines.reduce(
                     (s, l) =>
-                      s + lineValue(l.receivedQty ?? l.quantity, l.unitCost),
+                      s + lineValue(l.receivedQty ?? l.quantity, Number(l.unitCost)),
                     0
                   );
                   return (

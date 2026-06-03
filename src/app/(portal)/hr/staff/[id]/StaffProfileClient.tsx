@@ -326,7 +326,7 @@ function LeaveTab({ staffProfileId, isManager }: { staffProfileId: string; isMan
                 <td className="px-4 py-2">{l.leaveType}</td>
                 <td className="px-4 py-2 text-slate-500">{fmt(l.startDate)} – {fmt(l.endDate)}</td>
                 <td className="px-4 py-2">{l.totalDays}d</td>
-                <td className="px-4 py-2"><span className={`text-xs px-2 py-0.5 rounded ${{PENDING:"bg-amber-100 text-amber-700",APPROVED:"bg-green-100 text-green-700",REJECTED:"bg-red-100 text-red-700",CANCELLED:"bg-slate-100 text-slate-400",WITHDRAWN:"bg-slate-100 text-slate-400"}[l.status]}`}>{l.status}</span></td>
+                <td className="px-4 py-2"><span className={`text-xs px-2 py-0.5 rounded ${{PENDING:"bg-amber-100 text-amber-700",APPROVED:"bg-green-100 text-green-700",REJECTED:"bg-red-100 text-red-700",CANCELLED:"bg-slate-100 text-slate-400",WITHDRAWN:"bg-slate-100 text-slate-400"}[l.status as "PENDING"|"APPROVED"|"REJECTED"|"CANCELLED"|"WITHDRAWN"]}`}>{l.status}</span></td>
               </tr>
             ))}
           </tbody>
@@ -373,7 +373,7 @@ function AttendanceTab({ staffProfileId, isManager }: { staffProfileId: string; 
               <tr key={r.id} className="border-t border-slate-50">
                 <td className="px-3 py-2">{new Date(r.date).toLocaleDateString("en-MY", { day: "2-digit", month: "short" })}</td>
                 <td className="px-3 py-2 text-slate-400">{new Date(r.date).toLocaleDateString("en-MY", { weekday: "short" })}</td>
-                <td className="px-3 py-2"><span className={`text-xs px-2 py-0.5 rounded ${{PRESENT:"bg-green-100 text-green-700",ABSENT:"bg-red-100 text-red-700",LATE:"bg-amber-100 text-amber-700",HALF_DAY:"bg-orange-100 text-orange-700",ON_LEAVE:"bg-blue-100 text-blue-700",PUBLIC_HOLIDAY:"bg-purple-100 text-purple-700",OFF_DAY:"bg-slate-100 text-slate-500"}[r.status] ?? "bg-slate-100 text-slate-500"}`}>{r.status?.replace("_"," ")}</span></td>
+                <td className="px-3 py-2"><span className={`text-xs px-2 py-0.5 rounded ${{PRESENT:"bg-green-100 text-green-700",ABSENT:"bg-red-100 text-red-700",LATE:"bg-amber-100 text-amber-700",HALF_DAY:"bg-orange-100 text-orange-700",ON_LEAVE:"bg-blue-100 text-blue-700",PUBLIC_HOLIDAY:"bg-purple-100 text-purple-700",OFF_DAY:"bg-slate-100 text-slate-500"}[r.status as "PRESENT"|"ABSENT"|"LATE"|"HALF_DAY"|"ON_LEAVE"|"PUBLIC_HOLIDAY"|"OFF_DAY"] ?? "bg-slate-100 text-slate-500"}`}>{r.status?.replace("_"," ")}</span></td>
                 <td className="px-3 py-2 text-xs font-mono">{r.checkIn ? new Date(r.checkIn).toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit" }) : "—"}</td>
                 <td className="px-3 py-2 text-xs font-mono">{r.checkOut ? new Date(r.checkOut).toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit" }) : "—"}</td>
                 <td className="px-3 py-2 text-xs">{r.lateMinutes ? `${r.lateMinutes}m` : "—"}</td>
@@ -408,7 +408,7 @@ function PayrollTab({ staffProfileId, isManager }: { staffProfileId: string; isM
                 <td className="px-4 py-2">{RM(s.grossSalary)}</td>
                 <td className="px-4 py-2 text-red-600">{RM(Number(s.epfEmployee) + Number(s.socsoEmployee) + Number(s.incomeTax))}</td>
                 <td className="px-4 py-2 font-bold text-green-700">{RM(s.netSalary)}</td>
-                <td className="px-4 py-2"><span className={`text-xs px-2 py-0.5 rounded ${{DRAFT:"bg-slate-100 text-slate-500",APPROVED:"bg-blue-100 text-blue-700",PAID:"bg-green-100 text-green-700"}[s.payrollRun?.status] ?? ""}`}>{s.payrollRun?.status}</span></td>
+                <td className="px-4 py-2"><span className={`text-xs px-2 py-0.5 rounded ${{DRAFT:"bg-slate-100 text-slate-500",APPROVED:"bg-blue-100 text-blue-700",PAID:"bg-green-100 text-green-700"}[s.payrollRun?.status as "DRAFT"|"APPROVED"|"PAID"] ?? ""}`}>{s.payrollRun?.status}</span></td>
                 <td className="px-4 py-2 text-blue-600 text-xs">Details →</td>
               </tr>
             ))}
@@ -448,7 +448,7 @@ function ClaimsTab({ staffProfileId, isManager }: { staffProfileId: string; isMa
               <td className="px-4 py-2">{c.claimType}</td>
               <td className="px-4 py-2 font-medium">{RM(c.amount)}</td>
               <td className="px-4 py-2 text-slate-400">{fmt(c.claimDate)}</td>
-              <td className="px-4 py-2"><span className={`text-xs px-2 py-0.5 rounded ${{DRAFT:"bg-slate-100 text-slate-500",SUBMITTED:"bg-amber-100 text-amber-700",APPROVED:"bg-blue-100 text-blue-700",PAID:"bg-green-100 text-green-700",REJECTED:"bg-red-100 text-red-700"}[c.status] ?? ""}`}>{c.status}</span></td>
+              <td className="px-4 py-2"><span className={`text-xs px-2 py-0.5 rounded ${{DRAFT:"bg-slate-100 text-slate-500",SUBMITTED:"bg-amber-100 text-amber-700",APPROVED:"bg-blue-100 text-blue-700",PAID:"bg-green-100 text-green-700",REJECTED:"bg-red-100 text-red-700"}[c.status as "DRAFT"|"SUBMITTED"|"APPROVED"|"PAID"|"REJECTED"] ?? ""}`}>{c.status}</span></td>
             </tr>
           ))}
         </tbody>
@@ -478,7 +478,7 @@ function KpiTab({ staffProfileId, isManager }: { staffProfileId: string; isManag
                 <td className="px-4 py-2 font-medium">{k.period}</td>
                 <td className="px-4 py-2 text-slate-500">{k.template?.name}</td>
                 <td className="px-4 py-2">{k.overallScore != null ? <span className={`font-bold ${SCORE_COLOR(Number(k.overallScore))}`}>{Number(k.overallScore).toFixed(1)}%</span> : "—"}</td>
-                <td className="px-4 py-2"><span className={`text-xs px-2 py-0.5 rounded ${{DRAFT:"bg-slate-100 text-slate-500",ACTIVE:"bg-blue-100 text-blue-700",COMPLETED:"bg-purple-100 text-purple-700",ARCHIVED:"bg-slate-100 text-slate-400"}[k.status] ?? ""}`}>{k.status}</span></td>
+                <td className="px-4 py-2"><span className={`text-xs px-2 py-0.5 rounded ${{DRAFT:"bg-slate-100 text-slate-500",ACTIVE:"bg-blue-100 text-blue-700",COMPLETED:"bg-purple-100 text-purple-700",ARCHIVED:"bg-slate-100 text-slate-400"}[k.status as "DRAFT"|"ACTIVE"|"COMPLETED"|"ARCHIVED"] ?? ""}`}>{k.status}</span></td>
                 <td className="px-4 py-2 text-blue-600 text-xs">View →</td>
               </tr>
             ))}
@@ -513,7 +513,7 @@ function AppraisalsTab({ staffProfileId, isManager }: { staffProfileId: string; 
                 <td className="px-3 py-2 text-center">{a.selfRating ?? "—"}</td>
                 <td className="px-3 py-2 text-center">{a.managerRating ?? "—"}</td>
                 <td className="px-3 py-2 text-center font-bold">{a.finalRating ?? "—"}</td>
-                <td className="px-3 py-2"><span className={`text-xs px-2 py-0.5 rounded ${{DRAFT:"bg-slate-100 text-slate-500",SELF_REVIEW:"bg-amber-100 text-amber-700",MANAGER_REVIEW:"bg-blue-100 text-blue-700",COMPLETED:"bg-purple-100 text-purple-700",ACKNOWLEDGED:"bg-green-100 text-green-700"}[a.status] ?? ""}`}>{a.status?.replace("_"," ")}</span></td>
+                <td className="px-3 py-2"><span className={`text-xs px-2 py-0.5 rounded ${{DRAFT:"bg-slate-100 text-slate-500",SELF_REVIEW:"bg-amber-100 text-amber-700",MANAGER_REVIEW:"bg-blue-100 text-blue-700",COMPLETED:"bg-purple-100 text-purple-700",ACKNOWLEDGED:"bg-green-100 text-green-700"}[a.status as "DRAFT"|"SELF_REVIEW"|"MANAGER_REVIEW"|"COMPLETED"|"ACKNOWLEDGED"] ?? ""}`}>{a.status?.replace("_"," ")}</span></td>
                 <td className="px-3 py-2 text-blue-600 text-xs">View →</td>
               </tr>
             ))}
@@ -548,7 +548,7 @@ function DisciplinaryTab({ staffProfileId, isSuperAdmin }: { staffProfileId: str
                 <td className="px-4 py-2 font-mono text-xs text-slate-400">{r.discRef}</td>
                 <td className="px-4 py-2">{r.type?.replace("_"," ")}</td>
                 <td className="px-4 py-2 text-slate-500">{fmt(r.incidentDate)}</td>
-                <td className="px-4 py-2"><span className={`text-xs px-2 py-0.5 rounded ${{OPEN:"bg-red-100 text-red-700",RESPONDED:"bg-amber-100 text-amber-700",RESOLVED:"bg-green-100 text-green-700",CLOSED:"bg-slate-100 text-slate-400"}[r.status] ?? ""}`}>{r.status}</span></td>
+                <td className="px-4 py-2"><span className={`text-xs px-2 py-0.5 rounded ${{OPEN:"bg-red-100 text-red-700",RESPONDED:"bg-amber-100 text-amber-700",RESOLVED:"bg-green-100 text-green-700",CLOSED:"bg-slate-100 text-slate-400"}[r.status as "OPEN"|"RESPONDED"|"RESOLVED"|"CLOSED"] ?? ""}`}>{r.status}</span></td>
                 <td className="px-4 py-2 text-center">{r.isConfidential ? "🔒" : ""}</td>
                 <td className="px-4 py-2 text-blue-600 text-xs">View →</td>
               </tr>
@@ -588,7 +588,7 @@ function TrainingTab({ staffProfileId, isManager }: { staffProfileId: string; is
                 <td className="px-4 py-2 font-medium">{t.training?.title}</td>
                 <td className="px-4 py-2 text-slate-400 text-xs">{t.training?.provider ?? "—"}</td>
                 <td className="px-4 py-2 text-slate-400 text-xs">{fmt(t.training?.startDate)}</td>
-                <td className="px-4 py-2"><span className={`text-xs px-2 py-0.5 rounded ${{PLANNED:"bg-blue-100 text-blue-700",ONGOING:"bg-amber-100 text-amber-700",COMPLETED:"bg-green-100 text-green-700",CANCELLED:"bg-slate-100 text-slate-400"}[t.status] ?? ""}`}>{t.status}</span></td>
+                <td className="px-4 py-2"><span className={`text-xs px-2 py-0.5 rounded ${{PLANNED:"bg-blue-100 text-blue-700",ONGOING:"bg-amber-100 text-amber-700",COMPLETED:"bg-green-100 text-green-700",CANCELLED:"bg-slate-100 text-slate-400"}[t.status as "PLANNED"|"ONGOING"|"COMPLETED"|"CANCELLED"] ?? ""}`}>{t.status}</span></td>
                 <td className="px-4 py-2">{t.score ?? "—"}</td>
                 <td className="px-4 py-2">{t.certificateUrl ? <a href={t.certificateUrl} target="_blank" onClick={e => e.stopPropagation()} className="text-blue-600 text-xs hover:underline">Download</a> : "—"}</td>
               </tr>

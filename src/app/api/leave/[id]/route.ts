@@ -13,7 +13,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const body   = await req.json();
     const { action, reviewNote } = body; // action: "approve" | "reject" | "cancel"
 
-    const leave = await prisma.staffLeave.findUnique({ where: { id: params.id } });
+    const leave = await (prisma as any).staffLeave.findUnique({ where: { id: params.id } });
     if (!leave) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     // Only managers can approve/reject; staff can cancel own
@@ -29,7 +29,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       approve: "APPROVED", reject: "REJECTED", cancel: "CANCELLED",
     };
 
-    const updated = await prisma.staffLeave.update({
+    const updated = await (prisma as any).staffLeave.update({
       where: { id: params.id },
       data: {
         status:      statusMap[action],

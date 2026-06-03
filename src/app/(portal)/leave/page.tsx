@@ -21,7 +21,7 @@ export default async function LeavePage({
   const to        = new Date(y, m, 1);
 
   const [leaves, clinics] = await Promise.all([
-    prisma.staffLeave.findMany({
+    (prisma as any).staffLeave.findMany({
       where: {
         ...(isManager ? {} : { staffId: userId }),
         ...(clinicId ? { clinicId } : {}),
@@ -38,10 +38,10 @@ export default async function LeavePage({
   ]);
 
   // Leave summary counts
-  const pending  = leaves.filter(l => l.status === "PENDING").length;
-  const approved = leaves.filter(l => l.status === "APPROVED").length;
-  const totalDays = leaves.filter(l => l.status === "APPROVED")
-    .reduce((s, l) => s + Number(l.days), 0);
+  const pending  = leaves.filter((l: any) => l.status === "PENDING").length;
+  const approved = leaves.filter((l: any) => l.status === "APPROVED").length;
+  const totalDays = leaves.filter((l: any) => l.status === "APPROVED")
+    .reduce((s: number, l: any) => s + Number(l.days), 0);
 
   return (
     <LeaveClient

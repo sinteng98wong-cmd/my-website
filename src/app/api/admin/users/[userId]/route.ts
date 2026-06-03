@@ -101,8 +101,8 @@ export async function DELETE(
   // Check for any clinical records that would block hard delete
   const [appts, leaves, ledger] = await Promise.all([
     prisma.appointment.count({ where: { doctorId: params.userId } }),
-    prisma.staffLeave.count({ where: { userId: params.userId } }),
-    prisma.dailyLedger.count({ where: { editedById: params.userId } }),
+    (prisma as any).staffLeave.count({ where: { userId: params.userId } }),
+    prisma.dailyLedger.count({ where: { updatedBy: params.userId } }),
   ]);
 
   if (appts + leaves + ledger > 0) {

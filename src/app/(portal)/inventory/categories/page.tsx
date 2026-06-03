@@ -13,5 +13,5 @@ export default async function CategoriesPage() {
     },
   });
 
-  return <CategoriesClient initialCategories={categories} />;
+  return <CategoriesClient initialCategories={categories as any} />;
 }

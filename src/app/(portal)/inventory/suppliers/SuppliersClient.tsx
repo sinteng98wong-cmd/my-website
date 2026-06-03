@@ -98,23 +98,23 @@ export function SuppliersClient({ initialSuppliers }: { initialSuppliers: Suppli
             </div>
             <div>
               <label className="form-label">Code / Short ID</label>
-              <input className="form-input font-mono" value={form.code} onChange={f("code")} placeholder="e.g. 3M-MY" />
+              <input className="form-input font-mono" value={form.code ?? ""} onChange={f("code")} placeholder="e.g. 3M-MY" />
             </div>
             <div>
               <label className="form-label">Contact Person</label>
-              <input className="form-input" value={form.contactName} onChange={f("contactName")} />
+              <input className="form-input" value={form.contactName ?? ""} onChange={f("contactName")} />
             </div>
             <div>
               <label className="form-label">Email</label>
-              <input className="form-input" type="email" value={form.email} onChange={f("email")} />
+              <input className="form-input" type="email" value={form.email ?? ""} onChange={f("email")} />
             </div>
             <div>
               <label className="form-label">Phone</label>
-              <input className="form-input" value={form.phone} onChange={f("phone")} />
+              <input className="form-input" value={form.phone ?? ""} onChange={f("phone")} />
             </div>
             <div>
               <label className="form-label">Address</label>
-              <input className="form-input" value={form.address} onChange={f("address")} />
+              <input className="form-input" value={form.address ?? ""} onChange={f("address")} />
             </div>
           </div>
           {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</p>}

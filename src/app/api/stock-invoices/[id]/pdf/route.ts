@@ -60,7 +60,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
         { text: l.item.name,  fontSize: 9 },
         { text: l.item.sku,   fontSize: 8, color: "#9ca3af" },
         { text: `${qty} ${l.item.unit}`, fontSize: 9, alignment: "center" },
-        { text: fmt(l.unitCost), fontSize: 9, alignment: "right" },
+        { text: fmt(Number(l.unitCost)), fontSize: 9, alignment: "right" },
         { text: fmt(qty * Number(l.unitCost)), fontSize: 9, alignment: "right", bold: true },
       ]);
     });
@@ -71,7 +71,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     pageSize: "A4",
     pageMargins: [40, 40, 40, 60],
 
-    footer: (cur, count) => ({
+    footer: (cur: number, count: number) => ({
       margin: [40, 0],
       columns: [
         { text: `DentalOS Stock Invoice · ${new Date().toLocaleDateString("en-MY")}`, color: "#9ca3af", fontSize: 8 },
@@ -123,8 +123,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
             table: {
               widths: [110, 80],
               body: [
-                [{ text: "Subtotal", fontSize: 9, margin: [6, 4, 6, 4] }, { text: fmt(invoice.totalAmount), fontSize: 9, alignment: "right", margin: [0, 4, 6, 4] }],
-                [{ text: "SST", fontSize: 9, margin: [6, 4, 6, 4] }, { text: fmt(invoice.sst), fontSize: 9, alignment: "right", margin: [0, 4, 6, 4] }],
+                [{ text: "Subtotal", fontSize: 9, margin: [6, 4, 6, 4] }, { text: fmt(Number(invoice.totalAmount)), fontSize: 9, alignment: "right", margin: [0, 4, 6, 4] }],
+                [{ text: "SST", fontSize: 9, margin: [6, 4, 6, 4] }, { text: fmt(Number(invoice.sst)), fontSize: 9, alignment: "right", margin: [0, 4, 6, 4] }],
                 [
                   { text: "Grand Total", bold: true, fontSize: 11, fillColor: "#1e3a5f", color: "#fff", margin: [6, 6, 6, 6] },
                   { text: fmt(grand), bold: true, fontSize: 11, alignment: "right", fillColor: "#1e3a5f", color: "#fff", margin: [0, 6, 6, 6] },
@@ -174,7 +174,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     pdfDoc.end();
   });
 
-  return new NextResponse(buf, {
+  return new NextResponse(buf as unknown as BodyInit, {
     headers: {
       "Content-Type":        "application/pdf",
       "Content-Disposition": `inline; filename="${invoice.invoiceRef}.pdf"`,

@@ -24,12 +24,13 @@ export async function POST(req: NextRequest) {
     if (!session) return NextResponse.json({ error: "Unauthenticated" }, { status: 401 });
 
     const body = await req.json();
-    const { name, contactName, phone, email, address } = body;
+    const { name, contactName, phone, email, address, clinicId } = body;
 
     if (!name) return NextResponse.json({ error: "name is required" }, { status: 422 });
+    if (!clinicId) return NextResponse.json({ error: "clinicId is required" }, { status: 422 });
 
     const vendor = await prisma.labVendor.create({
-      data: { name, contactName, phone, email, address },
+      data: { name, contactName, phone, email, address, clinicId },
     });
     return NextResponse.json(vendor, { status: 201 });
   } catch (e: any) {
