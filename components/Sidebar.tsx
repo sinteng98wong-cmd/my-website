@@ -123,7 +123,7 @@ const NAV: NavEntry[] = [
     key:   "licenses",
     label: "Compliance",
     children: [
-      { key: "licenses",       label: "Licenses",      href: "/licenses",                  managerOnly: true },
+      { key: "licenses",       label: "Licenses",      href: "/licenses"                                    },
       { key: "license-types",  label: "License Types", href: "/admin/license-types", superAdminOnly: true },
     ],
   },
