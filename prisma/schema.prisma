@@ -127,6 +127,7 @@ model Clinic {
   eInvoiceBatches      EInvoiceBatch[]
   creditNotes          EInvoiceCreditNote[]
   debitNotes           EInvoiceDebitNote[]
+  licenses             License[]
 
   // Branch contact info
   address    String?
@@ -243,6 +244,7 @@ model User {
   picApprovedPVs      PaymentVoucher[] @relation("PVPicApproved")
   rejectedPVs         PaymentVoucher[] @relation("PVRejected")
   paidPVs             PaymentVoucher[] @relation("PVPaid")
+  createdLicenses    License[]      @relation("LicenseCreator")
   createdAt          DateTime       @default(now())
 }
 
@@ -364,6 +366,7 @@ model StaffProfile {
   paySlips          PaySlip[]
   documents         StaffDocument[]
   employmentHistory EmploymentHistory[]
+  licenses          License[]
 }
 
 model Attendance {
@@ -2138,4 +2141,68 @@ model SupplierInvoice {
   @@index([pvId])
   @@index([labJobId])
   @@index([stockInvoiceId])
+}
+
+// ── Licenses & Compliance ─────────────────────────────────────────────────
+
+enum LicenseScope {
+  CLINIC
+  DOCTOR
+}
+
+enum LicenseStatus {
+  ACTIVE
+  EXPIRING_SOON
+  EXPIRED
+  ARCHIVED
+}
+
+model LicenseType {
+  id          String       @id @default(cuid())
+  name        String
+  code        String?
+  scope       LicenseScope
+  issuingBody String?
+  description String?
+  isActive    Boolean      @default(true)
+  order       Int          @default(0)
+  licenses    License[]
+  createdAt   DateTime     @default(now())
+
+  @@index([scope, isActive])
+}
+
+model License {
+  id              String        @id @default(cuid())
+  licenseTypeId   String
+  licenseType     LicenseType   @relation(fields: [licenseTypeId], references: [id])
+  scope           LicenseScope
+  clinicId        String?
+  clinic          Clinic?       @relation(fields: [clinicId], references: [id])
+  staffProfileId  String?
+  staffProfile    StaffProfile? @relation(fields: [staffProfileId], references: [id])
+  licenseNo       String?
+  issuedDate      DateTime?
+  expiryDate      DateTime
+  status          LicenseStatus @default(ACTIVE)
+  documentUrl     String?
+  documentName    String?
+  notes           String?
+  alert90Sent     Boolean       @default(false)
+  alert60Sent     Boolean       @default(false)
+  alert30Sent     Boolean       @default(false)
+  alert7Sent      Boolean       @default(false)
+  expiredAlertSent Boolean      @default(false)
+  previousLicenseId String?     @unique
+  previousLicense   License?    @relation("LicenseRenewal", fields: [previousLicenseId], references: [id])
+  renewedTo         License?    @relation("LicenseRenewal")
+  createdById     String?
+  createdBy       User?         @relation("LicenseCreator", fields: [createdById], references: [id])
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([clinicId, status])
+  @@index([staffProfileId, status])
+  @@index([expiryDate])
+  @@index([status])
 }

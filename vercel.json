@@ -4,6 +4,7 @@
     { "path": "/api/cron/leave-digest",      "schedule": "0 8 * * 1"   },
     { "path": "/api/cron/hr-probation",      "schedule": "0 7 * * *"   },
     { "path": "/api/cron/hr-documents",      "schedule": "0 7 * * *"   },
-    { "path": "/api/cron/hr-leave-refresh",  "schedule": "0 6 1 * *"   }
+    { "path": "/api/cron/hr-leave-refresh",  "schedule": "0 6 1 * *"   },
+    { "path": "/api/cron/license-expiry",    "schedule": "0 7 * * *"   }
   ]
 }

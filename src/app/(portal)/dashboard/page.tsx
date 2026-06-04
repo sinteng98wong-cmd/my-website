@@ -20,7 +20,7 @@ export default async function DashboardPage() {
 
   const today = new Date(); today.setHours(0, 0, 0, 0);
 
-  const [patientCount, todayVisits, recentPatients, pendingComm] = await Promise.all([
+  const [patientCount, todayVisits, recentPatients, pendingComm, licenseAlerts] = await Promise.all([
     prisma.patient.count({ where: notDeleted(clinicFilter) }),
     prisma.visit.count({ where: notDeleted({ visitDate: { gte: today }, ...visitClinicFilter }) }),
     prisma.patient.findMany({
@@ -33,6 +33,13 @@ export default async function DashboardPage() {
       where: { status: "PENDING_LOCK" },
       _sum: { finalPayout: true },
     }),
+    ["SUPER_ADMIN","CLINIC_MANAGER"].includes(role)
+      ? prisma.license.groupBy({
+          by: ["status"],
+          where: { status: { in: ["EXPIRED","EXPIRING_SOON"] } },
+          _count: true,
+        })
+      : Promise.resolve([]),
   ]);
 
   const stats = [
@@ -65,6 +72,22 @@ export default async function DashboardPage() {
           </div>
         ))}
       </div>
+
+      {/* License alerts */}
+      {(licenseAlerts as any[]).length > 0 && (
+        <div className="mb-5 space-y-2">
+          {(licenseAlerts as any[]).find((g: any) => g.status === "EXPIRED") && (
+            <Link href="/licenses" className="flex items-center gap-2 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-red-700 text-sm font-medium hover:bg-red-100">
+              🔴 {(licenseAlerts as any[]).find((g: any) => g.status === "EXPIRED")._count} license(s) expired — click to review
+            </Link>
+          )}
+          {(licenseAlerts as any[]).find((g: any) => g.status === "EXPIRING_SOON") && (
+            <Link href="/licenses" className="flex items-center gap-2 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-amber-700 text-sm font-medium hover:bg-amber-100">
+              🟡 {(licenseAlerts as any[]).find((g: any) => g.status === "EXPIRING_SOON")._count} license(s) expiring within 90 days
+            </Link>
+          )}
+        </div>
+      )}
 
       {links.length > 0 && (
         <div className="mb-6">

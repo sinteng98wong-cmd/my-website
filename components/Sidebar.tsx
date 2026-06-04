@@ -117,6 +117,17 @@ const NAV: NavEntry[] = [
     ],
   },
 
+  // ── Licenses ───────────────────────────────────────────────────────
+  {
+    type:  "group",
+    key:   "licenses",
+    label: "Compliance",
+    children: [
+      { key: "licenses",       label: "Licenses",      href: "/licenses",                  managerOnly: true },
+      { key: "license-types",  label: "License Types", href: "/admin/license-types", superAdminOnly: true },
+    ],
+  },
+
   // ── Admin ──────────────────────────────────────────────────────────
   {
     type:  "group",

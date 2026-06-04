@@ -1071,6 +1071,27 @@ async function main() {
     }
   }
 
+  // ── License Types ─────────────────────────────────────────────────
+  const licenseTypeSeed = [
+    { id: "lt-phfsa",    name: "Private Healthcare Facility License", code: "PHFSA",    scope: "CLINIC", issuingBody: "KKM (Ministry of Health)",       order: 1 },
+    { id: "lt-premise",  name: "Premise License",                     code: "PREMISE",  scope: "CLINIC", issuingBody: "Local Council",                   order: 2 },
+    { id: "lt-aelb",     name: "Radiology/X-ray License",             code: "AELB",     scope: "CLINIC", issuingBody: "Atomic Energy Licensing Board",    order: 3 },
+    { id: "lt-biz",      name: "Business License",                    code: "BIZ",      scope: "CLINIC", issuingBody: "Local Council",                   order: 4 },
+    { id: "lt-bomba",    name: "Fire Certificate",                    code: "BOMBA",    scope: "CLINIC", issuingBody: "Fire & Rescue Department",         order: 5 },
+    { id: "lt-sign",     name: "Signboard License",                   code: "SIGN",     scope: "CLINIC", issuingBody: "Local Council",                   order: 6 },
+    { id: "lt-apc",      name: "Annual Practising Certificate",       code: "APC",      scope: "DOCTOR", issuingBody: "Malaysian Dental Council",         order: 7 },
+    { id: "lt-mdc",      name: "MDC Registration",                    code: "MDC",      scope: "DOCTOR", issuingBody: "Malaysian Dental Council",         order: 8 },
+    { id: "lt-indemnity",name: "Professional Indemnity Insurance",    code: "INDEMNITY",scope: "DOCTOR", issuingBody: "Insurance Provider",               order: 9 },
+  ] as const;
+
+  for (const lt of licenseTypeSeed) {
+    await (prisma as any).licenseType.upsert({
+      where: { id: lt.id },
+      update: {},
+      create: lt,
+    });
+  }
+
   console.log("✅ Sample data seeded!");
   console.log("");
   console.log("Login accounts (password: admin123)");
