@@ -4,11 +4,16 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { calculateReferralCommission, hasExistingCommission } from "@/lib/referral-commission";
+import { resolveSettlementDays, computeExpectedSettlementDate, DEFAULT_CC_SUBTYPE } from "@/lib/settlement";
+
+const COLLECTED_METHODS: string[] = ["CASH_CURRENT", "CASH_NEXT", "CREDIT_CARD", "FPX", "EWALLET", "ATOME"];
 
 const PaymentLineSchema = z.object({
   method:         z.enum(["CASH_CURRENT","CASH_NEXT","CREDIT_CARD","FPX","EWALLET","ATOME","PANEL"]),
   amount:         z.number().positive(),
   panelProviderId: z.string().min(1).optional(),
+  settlementBankId: z.string().min(1).optional(),
+  expectedSettlementDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(), // manual override
 }).refine(p => p.method !== "PANEL" || !!p.panelProviderId, {
   message: "PANEL payment requires a panelProviderId",
   path: ["panelProviderId"],
@@ -47,8 +52,39 @@ export async function POST(req: NextRequest) {
   const total = Math.round((d.subtotal + d.sst) * 100) / 100;
   const now   = new Date();
 
+  // Resolve the visit's clinic — needed for per-method settlement timing.
+  const visit = await prisma.visit.findUnique({
+    where: { id: d.visitId },
+    select: { clinicId: true, patientId: true },
+  });
+  if (!visit) return NextResponse.json({ error: "Visit not found" }, { status: 404 });
+
   // All amounts collected = mark collectedAt now
-  const allCollected = d.payments.every(p => ["CASH_CURRENT","CASH_NEXT","CREDIT_CARD","FPX","EWALLET","ATOME"].includes(p.method));
+  const allCollected = d.payments.every(p => COLLECTED_METHODS.includes(p.method));
+
+  // Build payment lines with expected settlement timing. The chosen bank
+  // drives the delay; falls back to the per-method default when no bank set.
+  const paymentCreates = await Promise.all(d.payments.map(async (p) => {
+    const collectedAt = COLLECTED_METHODS.includes(p.method) ? now : null;
+    const subType     = p.method === "CREDIT_CARD" ? DEFAULT_CC_SUBTYPE : null;
+    const baseDate    = collectedAt ?? now;
+    const days        = await resolveSettlementDays(visit.clinicId, p.method, subType, p.settlementBankId);
+    const manual      = p.expectedSettlementDate ? new Date(p.expectedSettlementDate + "T00:00:00") : null;
+    const expectedSettlementDate = manual ?? computeExpectedSettlementDate(baseDate, days);
+    // Same-day money (settlementDays = 0, no manual deferral) is recorded as
+    // already settled so it doesn't clutter the pending reconciliation list.
+    const settledNow  = days === 0 && collectedAt != null && !manual;
+    return {
+      method:          p.method,
+      amount:          p.amount,
+      panelProviderId: p.panelProviderId ?? null,
+      settlementBankId: p.settlementBankId ?? null,
+      collectedAt,
+      expectedSettlementDate,
+      settledDate:   settledNow ? collectedAt : null,
+      settledAmount: settledNow ? p.amount   : null,
+    };
+  }));
 
   const invoice = await prisma.invoice.create({
     data: {
@@ -58,15 +94,7 @@ export async function POST(req: NextRequest) {
       sst:         d.sst,
       total,
       collectedAt: allCollected ? now : null,
-      payments: {
-        create: d.payments.map(p => ({
-          method:          p.method,
-          amount:          p.amount,
-          panelProviderId: p.panelProviderId ?? null,
-          collectedAt:     ["CASH_CURRENT","CASH_NEXT","CREDIT_CARD","FPX","EWALLET","ATOME"].includes(p.method)
-            ? now : null,
-        })),
-      },
+      payments: { create: paymentCreates },
     },
     include: {
       payments: { include: { panelProvider: { select: { name: true } } } },
@@ -95,8 +123,7 @@ export async function POST(req: NextRequest) {
   // Referral commission: trigger on the patient's FIRST paid invoice
   if (allCollected) {
     try {
-      const visit = await prisma.visit.findUnique({ where: { id: d.visitId }, select: { patientId: true } });
-      if (visit && !(await hasExistingCommission(visit.patientId))) {
+      if (!(await hasExistingCommission(visit.patientId))) {
         await calculateReferralCommission(visit.patientId, invoice.id);
       }
     } catch (e) {

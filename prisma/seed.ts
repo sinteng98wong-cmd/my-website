@@ -1092,6 +1092,22 @@ async function main() {
     });
   }
 
+  // ── Settlement Banks / Acquirers ──────────────────────────────────
+  const bankSeed = [
+    { id: "bank-maybank", name: "Maybank",              settlementDays: 2  },
+    { id: "bank-cimb",    name: "CIMB Bank",            settlementDays: 2  },
+    { id: "bank-pbb",     name: "Public Bank",          settlementDays: 3  },
+    { id: "bank-rhb",     name: "RHB Bank",             settlementDays: 2  },
+    { id: "bank-fpx",     name: "FPX (Online Banking)", settlementDays: 1  },
+    { id: "bank-tng",     name: "Touch 'n Go eWallet",  settlementDays: 1  },
+    { id: "bank-grabpay", name: "GrabPay",              settlementDays: 2  },
+    { id: "bank-atome",   name: "Atome",                settlementDays: 14 },
+    { id: "bank-cash",    name: "Cash Deposit",         settlementDays: 0  },
+  ];
+  for (const b of bankSeed) {
+    await (prisma as any).settlementBank.upsert({ where: { id: b.id }, update: {}, create: b });
+  }
+
   console.log("✅ Sample data seeded!");
   console.log("");
   console.log("Login accounts (password: admin123)");

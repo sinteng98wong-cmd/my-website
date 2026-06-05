@@ -37,6 +37,12 @@ export default async function VisitPage({ params }: { params: { id: string } }) 
     prisma.panelProvider.findMany({ where: { active: true }, select: { id: true, name: true, code: true }, orderBy: { name: "asc" } }),
   ]);
 
+  const banks = await prisma.settlementBank.findMany({
+    where: { isActive: true },
+    select: { id: true, name: true, settlementDays: true },
+    orderBy: { name: "asc" },
+  });
+
   if (!visit) notFound();
 
   const visitSafe        = JSON.parse(JSON.stringify(visit));
@@ -60,6 +66,7 @@ export default async function VisitPage({ params }: { params: { id: string } }) 
         vendors={vendors}
         doctors={doctors}
         panelProviders={panelProviders}
+        banks={banks}
       />
     </div>
   );

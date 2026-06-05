@@ -26,6 +26,7 @@ type TreatmentType  = { id: string; name: string; defaultPrice: number };
 type Vendor         = { id: string; name: string };
 type Doctor         = { id: string; name: string };
 type PanelProvider  = { id: string; name: string; code: string };
+type Bank           = { id: string; name: string; settlementDays: number };
 type PaymentLine    = { method: string; amount: number; panelProvider?: { id: string; name: string } | null };
 
 type Treatment = {
@@ -51,13 +52,14 @@ type Visit = {
 };
 
 export function VisitClient({
-  visit: initial, treatmentTypes, vendors, doctors, panelProviders,
+  visit: initial, treatmentTypes, vendors, doctors, panelProviders, banks,
 }: {
   visit: Visit;
   treatmentTypes: TreatmentType[];
   vendors: Vendor[];
   doctors: Doctor[];
   panelProviders: PanelProvider[];
+  banks: Bank[];
 }) {
   const [visit, setVisit]           = useState<Visit>(initial);
   const [saving, setSaving]         = useState(false);
@@ -90,7 +92,7 @@ export function VisitClient({
   const sstAmount     = applySst ? Math.round(totalBilled * SST_RATE * 100) / 100 : 0;
   const invoiceTotal  = Math.round((totalBilled + sstAmount) * 100) / 100;
 
-  const blankLine = { method: "CASH_CURRENT", amount: "", panelProviderId: "" };
+  const blankLine = { method: "CASH_CURRENT", amount: "", panelProviderId: "", settlementBankId: "" };
   const [payLines, setPayLines] = useState([{ ...blankLine }]);
 
   const payLinesTotal = payLines.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
@@ -188,9 +190,10 @@ export function VisitClient({
         subtotal: totalBilled,
         sst:      sstAmount,
         payments: payLines.map(l => ({
-          method:          l.method,
-          amount:          parseFloat(l.amount),
-          panelProviderId: l.panelProviderId || undefined,
+          method:           l.method,
+          amount:           parseFloat(l.amount),
+          panelProviderId:  l.panelProviderId || undefined,
+          settlementBankId: l.settlementBankId || undefined,
         })),
       }),
     });
@@ -448,6 +451,15 @@ export function VisitClient({
                           onChange={e => updatePayLine(i, "panelProviderId", e.target.value)} required>
                           <option value="">Select panel…</option>
                           {panelProviders.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                        </select>
+                      )}
+
+                      {line.method !== "PANEL" && (
+                        <select className="form-input flex-1" value={line.settlementBankId}
+                          onChange={e => updatePayLine(i, "settlementBankId", e.target.value)}
+                          title="Bank / acquirer — determines when the money is received">
+                          <option value="">Bank…</option>
+                          {banks.map(b => <option key={b.id} value={b.id}>{b.name} (T+{b.settlementDays})</option>)}
                         </select>
                       )}
 
