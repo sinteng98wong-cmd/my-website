@@ -4,12 +4,12 @@ import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { createConsentRequest, getConsentUrl, getWhatsAppLink } from "@/lib/consent";
-import QRCode from "qrcode";
+import * as QRCode from "qrcode";
 
 const CreateRequestSchema = z.object({
-  templateId: z.string().cuid(),
-  patientId: z.string().cuid(),
-  clinicId: z.string().cuid(),
+  templateId: z.string().min(1),
+  patientId: z.string().min(1),
+  clinicId: z.string().min(1),
   treatmentPlanId: z.string().optional(),
   expiryHours: z.number().int().min(1).max(720).default(48),
 });
@@ -22,15 +22,20 @@ export async function POST(req: NextRequest) {
   const parsed = CreateRequestSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
 
-  const sentById = (session.user as any).id as string;
+  const sentById = (session.user as any).id as string | undefined;
 
-  const request = await createConsentRequest({ ...parsed.data, sentById });
+  try {
+    const request = await createConsentRequest({ ...parsed.data, sentById });
 
-  const consentUrl = getConsentUrl(request.token);
-  const whatsappLink = getWhatsAppLink(request.patient, consentUrl, request.clinic.name);
-  const qrCodeData = await QRCode.toDataURL(consentUrl);
+    const consentUrl = getConsentUrl(request.token);
+    const whatsappLink = getWhatsAppLink(request.patient, consentUrl, request.clinic.name);
+    const qrCodeData = await QRCode.toDataURL(consentUrl);
 
-  return NextResponse.json({ request, consentUrl, whatsappLink, qrCodeData }, { status: 201 });
+    return NextResponse.json({ request, consentUrl, whatsappLink, qrCodeData }, { status: 201 });
+  } catch (err: any) {
+    console.error("[POST /api/consent/requests]", err);
+    return NextResponse.json({ error: err?.message ?? "internal_error" }, { status: 500 });
+  }
 }
 
 export async function GET(req: NextRequest) {

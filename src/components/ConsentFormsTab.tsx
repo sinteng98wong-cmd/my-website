@@ -290,7 +290,8 @@ function SendConsentModal({
       });
       onCreated();
     } else {
-      alert("Failed to create consent request.");
+      const errData = await res.json().catch(() => ({}));
+      alert(`Failed to create consent request: ${errData.error ?? res.status}`);
     }
     setBusy(false);
   }

@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { generateConsentToken, getConsentUrl, getWhatsAppLink } from "@/lib/consent";
-import QRCode from "qrcode";
+import * as QRCode from "qrcode";
 
 const ResendSchema = z.object({ expiryHours: z.number().int().min(1).max(720).default(48) });
 
