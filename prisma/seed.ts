@@ -1108,6 +1108,53 @@ async function main() {
     await (prisma as any).settlementBank.upsert({ where: { id: b.id }, update: {}, create: b });
   }
 
+  // ── Treatment Stage Templates ──────────────────────────────────────
+  const stageTemplates = [
+    // Root Canal Treatment
+    { id:"tst-rct-1", treatmentTypeId:"tx-rct",     order:1,  name:"Access Opening & Pulp Removal",      description:"Anaesthesia, access cavity preparation, pulp chamber removal",  defaultCost:150,  estimatedDays:7   },
+    { id:"tst-rct-2", treatmentTypeId:"tx-rct",     order:2,  name:"Cleaning & Shaping (BMP)",           description:"Biomechanical preparation, irrigation, and canal measurement",   defaultCost:200,  estimatedDays:7   },
+    { id:"tst-rct-3", treatmentTypeId:"tx-rct",     order:3,  name:"Obturation (Canal Filling)",          description:"Gutta-percha obturation and temporary restoration",              defaultCost:200,  estimatedDays:14  },
+    { id:"tst-rct-4", treatmentTypeId:"tx-rct",     order:4,  name:"Post & Core Build-Up",                description:"Post placement and core build-up prior to crown",                defaultCost:250,  estimatedDays:7   },
+    { id:"tst-rct-5", treatmentTypeId:"tx-rct",     order:5,  name:"Crown Cementation",                   description:"Permanent crown fitting and cementation",                        defaultCost:600,  estimatedDays:null },
+    // Implant
+    { id:"tst-imp-1", treatmentTypeId:"tx-implant", order:1,  name:"Consultation & Assessment",           description:"Clinical exam, OPG/CBCT review, treatment planning",             defaultCost:100,  estimatedDays:7   },
+    { id:"tst-imp-2", treatmentTypeId:"tx-implant", order:2,  name:"Implant Placement (Surgery)",         description:"Surgical placement of titanium implant fixture",                 defaultCost:2500, estimatedDays:90  },
+    { id:"tst-imp-3", treatmentTypeId:"tx-implant", order:3,  name:"Osseointegration Review",             description:"3-month review to confirm osseointegration, take impressions",   defaultCost:100,  estimatedDays:14  },
+    { id:"tst-imp-4", treatmentTypeId:"tx-implant", order:4,  name:"Abutment Placement",                  description:"Abutment connection and soft-tissue contouring",                 defaultCost:500,  estimatedDays:14  },
+    { id:"tst-imp-5", treatmentTypeId:"tx-implant", order:5,  name:"Crown Delivery",                      description:"Final implant crown fitting and occlusion check",                defaultCost:1200, estimatedDays:null },
+    // Braces
+    { id:"tst-brc-1",  treatmentTypeId:"tx-braces", order:1,  name:"Records & Study Models",              description:"Clinical photos, X-rays (OPG/Ceph), dental impressions",        defaultCost:200,  estimatedDays:14  },
+    { id:"tst-brc-2",  treatmentTypeId:"tx-braces", order:2,  name:"Banding / Bonding",                   description:"Bracket bonding or band placement, archwire insertion",          defaultCost:1500, estimatedDays:28  },
+    { id:"tst-brc-3",  treatmentTypeId:"tx-braces", order:3,  name:"Monthly Adjustment #1",               description:"Wire change, tooth movement check",                              defaultCost:80,   estimatedDays:28  },
+    { id:"tst-brc-4",  treatmentTypeId:"tx-braces", order:4,  name:"Monthly Adjustment #2",               description:"Wire change and progress review",                                defaultCost:80,   estimatedDays:28  },
+    { id:"tst-brc-5",  treatmentTypeId:"tx-braces", order:5,  name:"Monthly Adjustment #3",               description:"Wire change and progress review",                                defaultCost:80,   estimatedDays:28  },
+    { id:"tst-brc-6",  treatmentTypeId:"tx-braces", order:6,  name:"Monthly Adjustment #4",               description:"Wire change and progress review",                                defaultCost:80,   estimatedDays:28  },
+    { id:"tst-brc-7",  treatmentTypeId:"tx-braces", order:7,  name:"Monthly Adjustment #5",               description:"Wire change and progress review",                                defaultCost:80,   estimatedDays:28  },
+    { id:"tst-brc-8",  treatmentTypeId:"tx-braces", order:8,  name:"Monthly Adjustment #6",               description:"Wire change and progress review",                                defaultCost:80,   estimatedDays:28  },
+    { id:"tst-brc-9",  treatmentTypeId:"tx-braces", order:9,  name:"De-banding",                          description:"Bracket removal, polishing, retainer impressions",               defaultCost:200,  estimatedDays:14  },
+    { id:"tst-brc-10", treatmentTypeId:"tx-braces", order:10, name:"Retainer Delivery",                   description:"Upper and lower retainer fitting and patient instruction",        defaultCost:300,  estimatedDays:null },
+    // Crown
+    { id:"tst-crn-1", treatmentTypeId:"tx-crown",   order:1,  name:"Tooth Preparation & Impression",      description:"Tooth reduction, temporary crown, final impression sent to lab",  defaultCost:300,  estimatedDays:10  },
+    { id:"tst-crn-2", treatmentTypeId:"tx-crown",   order:2,  name:"Crown Try-In",                        description:"Check fit, shade, and occlusion; adjust if needed",              defaultCost:0,    estimatedDays:7   },
+    { id:"tst-crn-3", treatmentTypeId:"tx-crown",   order:3,  name:"Crown Cementation",                   description:"Final cementation and occlusion check",                          defaultCost:600,  estimatedDays:null },
+    // Veneer
+    { id:"tst-ven-1", treatmentTypeId:"tx-veneer",  order:1,  name:"Consultation & Shade Selection",      description:"Digital smile design, shade matching, prep discussion",          defaultCost:100,  estimatedDays:7   },
+    { id:"tst-ven-2", treatmentTypeId:"tx-veneer",  order:2,  name:"Tooth Preparation & Impression",      description:"Minimal enamel reduction, impression, temporaries placed",       defaultCost:400,  estimatedDays:10  },
+    { id:"tst-ven-3", treatmentTypeId:"tx-veneer",  order:3,  name:"Veneer Try-In",                       description:"Check translucency, shade, contour; approve with patient",       defaultCost:0,    estimatedDays:7   },
+    { id:"tst-ven-4", treatmentTypeId:"tx-veneer",  order:4,  name:"Veneer Bonding",                      description:"Acid etch, silane, resin bonding, occlusion check",              defaultCost:900,  estimatedDays:null },
+    // Scaling
+    { id:"tst-scl-1", treatmentTypeId:"tx-scaling", order:1,  name:"Full-Mouth Scaling & Polishing",      description:"Supragingival scaling, subgingival debridement, AIR polish",     defaultCost:120,  estimatedDays:21  },
+    { id:"tst-scl-2", treatmentTypeId:"tx-scaling", order:2,  name:"Periodontal Review",                  description:"Pocket depth check, plaque score, oral hygiene reinforcement",   defaultCost:50,   estimatedDays:null },
+  ] as const;
+
+  for (const t of stageTemplates) {
+    await (prisma as any).treatmentStageTemplate.upsert({
+      where: { id: t.id },
+      update: {},
+      create: t,
+    });
+  }
+
   console.log("✅ Sample data seeded!");
   console.log("");
   console.log("Login accounts (password: admin123)");
