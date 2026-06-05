@@ -11,6 +11,7 @@ import { WalkInButton } from "./WalkInButton";
 import { DepositBalanceBadge } from "@/components/DepositBalanceBadge";
 import { PatientDepositTab } from "@/components/PatientDepositTab";
 import { ConsentFormsTab } from "@/components/ConsentFormsTab";
+import { PatientTreatmentPlansTab } from "@/components/PatientTreatmentPlansTab";
 import { getDepositBalance } from "@/lib/deposit";
 
 // re-used in two places below
@@ -132,11 +133,12 @@ export default async function PatientDetailPage({
   const outstanding    = totalBilled - totalCollected;
 
   const TABS = [
-    { key: "visits",   label: "Visit History" },
-    { key: "chart",    label: "Dental Chart" },
-    { key: "mc",       label: "Medical Certificate" },
-    { key: "deposit",  label: "Deposit / Wallet" },
-    { key: "consent",  label: "Consent Forms" },
+    { key: "visits",    label: "Visit History" },
+    { key: "plans",     label: "Treatment Plans" },
+    { key: "chart",     label: "Dental Chart" },
+    { key: "mc",        label: "Medical Certificate" },
+    { key: "deposit",   label: "Deposit / Wallet" },
+    { key: "consent",   label: "Consent Forms" },
   ];
 
   return (
@@ -384,6 +386,11 @@ export default async function PatientDetailPage({
                 })}
               </div>
             )
+          )}
+
+          {/* ── Treatment Plans ── */}
+          {tab === "plans" && (
+            <PatientTreatmentPlansTab patientId={params.id} />
           )}
 
           {/* ── Dental Chart ── */}

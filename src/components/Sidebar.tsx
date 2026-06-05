@@ -46,10 +46,11 @@ const NAV: NavEntry[] = [
     key:   "patient-care",
     label: "Patient Care",
     children: [
-      { key: "patients",     label: "Patients",     href: "/patients"     },
-      { key: "appointments", label: "Appointments", href: "/appointments" },
-      { key: "schedule",     label: "Schedule",     href: "/schedule"     },
-      { key: "lab",          label: "Lab Work",     href: "/lab"          },
+      { key: "patients",          label: "Patients",          href: "/patients"               },
+      { key: "treatment-plans",  label: "Treatment Plans",   href: "/treatment-plans"        },
+      { key: "appointments",     label: "Appointments",      href: "/appointments"           },
+      { key: "schedule",         label: "Schedule",          href: "/schedule"               },
+      { key: "lab",              label: "Lab Work",          href: "/lab"                    },
     ],
   },
 
@@ -138,6 +139,7 @@ const NAV: NavEntry[] = [
     key:   "admin",
     label: "Admin",
     children: [
+      { key: "stage-templates", label: "Stage Templates", href: "/admin/stage-templates",   superAdminOnly: true },
       { key: "companies",   label: "Companies",          href: "/admin/companies",         superAdminOnly: true },
       { key: "users",       label: "Users",              href: "/users",                   superAdminOnly: true },
       { key: "patient-src", label: "Patient Sources",    href: "/admin/patient-sources",   superAdminOnly: true },

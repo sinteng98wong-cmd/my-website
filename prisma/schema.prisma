@@ -129,6 +129,7 @@ model Clinic {
   debitNotes           EInvoiceDebitNote[]
   licenses             License[]
   paymentMethodConfigs PaymentMethodConfig[]
+  treatmentPlans       TreatmentPlan[]
   consentRequests      ConsentRequest[]
 
   // Branch contact info
@@ -246,9 +247,14 @@ model User {
   picApprovedPVs      PaymentVoucher[] @relation("PVPicApproved")
   rejectedPVs         PaymentVoucher[] @relation("PVRejected")
   paidPVs             PaymentVoucher[] @relation("PVPaid")
-  createdLicenses    License[]      @relation("LicenseCreator")
-  sentConsents       ConsentRequest[] @relation("ConsentSender")
-  createdAt          DateTime       @default(now())
+  createdLicenses      License[]              @relation("LicenseCreator")
+  sentConsents         ConsentRequest[]       @relation("ConsentSender")
+  // Treatment plan relations
+  planDentist          TreatmentPlan[]        @relation("PlanDentist")
+  createdPlans         TreatmentPlan[]        @relation("PlanCreator")
+  performedStages      TreatmentStage[]       @relation("StagePerformer")
+  recordedPlanPayments TreatmentPlanPayment[] @relation("PlanPaymentRecorder")
+  createdAt            DateTime               @default(now())
 }
 
 model UserClinic {
@@ -489,6 +495,7 @@ model Patient {
   deposits      PatientDeposit[]
   salesReturns  SalesReturn[]
   consentRequests ConsentRequest[]
+  treatmentPlans  TreatmentPlan[]
   createdAt     DateTime  @default(now())
   deletedAt     DateTime?
   deletedBy     String?
@@ -574,8 +581,9 @@ model TreatmentType {
   name          String
   defaultPrice  Decimal               @db.Decimal(10,2)
   sstApplicable Boolean               @default(false)
-  treatments    Treatment[]
-  doctorRates   DoctorTreatmentRate[]
+  treatments     Treatment[]
+  doctorRates    DoctorTreatmentRate[]
+  stageTemplates TreatmentStageTemplate[]
 }
 
 model Visit {
@@ -591,12 +599,13 @@ model Visit {
   treatments     Treatment[]
   invoices       Invoice[]
   labJobs        LabJob[]
-  toothRecords   ToothRecord[]
-  appointment    Appointment?
-  createdAt      DateTime  @default(now())
-  deletedAt      DateTime?
-  deletedBy      String?
-  deletedByUser  User?     @relation("VisitDeletedBy", fields: [deletedBy], references: [id])
+  toothRecords    ToothRecord[]
+  appointment     Appointment?
+  treatmentStages TreatmentStage[]
+  createdAt       DateTime  @default(now())
+  deletedAt       DateTime?
+  deletedBy       String?
+  deletedByUser   User?     @relation("VisitDeletedBy", fields: [deletedBy], references: [id])
   @@index([clinicId, visitDate])
   @@index([patientId])
   @@index([deletedAt])
@@ -715,6 +724,7 @@ model Invoice {
   referralCommissions ReferralCommission[]
   depositUtilizations PatientDeposit[]     @relation("DepositUtilizationInvoice")
   salesReturns        SalesReturn[]        @relation("SalesReturnOriginalInvoice")
+  planPayments        TreatmentPlanPayment[]
   createdAt     DateTime  @default(now())
   deletedAt     DateTime?
   deletedBy     String?
@@ -2343,4 +2353,120 @@ model ConsentRequest {
   @@index([patientId])
   @@index([token])
   @@index([status])
+}
+
+// ── Treatment Plans ───────────────────────────────────────────────────────
+
+enum TreatmentPlanStatus {
+  DRAFT
+  QUOTED
+  ACCEPTED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum StageStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  SKIPPED
+}
+
+enum PlanPaymentMode {
+  DEPOSIT_BALANCE
+  PAY_PER_STAGE
+  FULL_UPFRONT
+}
+
+model TreatmentStageTemplate {
+  id              String        @id @default(cuid())
+  treatmentTypeId String
+  treatmentType   TreatmentType @relation(fields: [treatmentTypeId], references: [id])
+  name            String
+  description     String?
+  order           Int
+  defaultCost     Decimal?      @db.Decimal(10,2)
+  estimatedDays   Int?
+  isActive        Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+
+  @@index([treatmentTypeId])
+}
+
+model TreatmentPlan {
+  id                     String              @id @default(cuid())
+  planRef                String              @unique
+  patientId              String
+  patient                Patient             @relation(fields: [patientId], references: [id])
+  clinicId               String
+  clinic                 Clinic              @relation(fields: [clinicId], references: [id])
+  dentistId              String
+  dentist                User                @relation("PlanDentist", fields: [dentistId], references: [id])
+  title                  String
+  toothCodes             String[]
+  status                 TreatmentPlanStatus @default(DRAFT)
+  paymentMode            PlanPaymentMode     @default(DEPOSIT_BALANCE)
+  subtotal               Decimal             @db.Decimal(10,2)
+  discount               Decimal             @default(0) @db.Decimal(10,2)
+  sstAmount              Decimal             @default(0) @db.Decimal(10,2)
+  totalAmount            Decimal             @db.Decimal(10,2)
+  depositRequired        Decimal             @default(0) @db.Decimal(10,2)
+  totalPaid              Decimal             @default(0) @db.Decimal(10,2)
+  acceptedAt             DateTime?
+  acceptedByName         String?
+  acceptanceSignatureUrl String?
+  quotedAt               DateTime?
+  completedAt            DateTime?
+  notes                  String?
+  stages                 TreatmentStage[]
+  payments               TreatmentPlanPayment[]
+  createdById            String?
+  createdBy              User?               @relation("PlanCreator", fields: [createdById], references: [id])
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
+
+  @@index([patientId, status])
+  @@index([clinicId, status])
+  @@index([dentistId])
+}
+
+model TreatmentStage {
+  id            String        @id @default(cuid())
+  planId        String
+  plan          TreatmentPlan @relation(fields: [planId], references: [id])
+  name          String
+  description   String?
+  order         Int
+  status        StageStatus   @default(PENDING)
+  cost          Decimal       @default(0) @db.Decimal(10,2)
+  visitId       String?
+  visit         Visit?        @relation(fields: [visitId], references: [id])
+  performedById String?
+  performedBy   User?         @relation("StagePerformer", fields: [performedById], references: [id])
+  completedAt   DateTime?
+  clinicalNotes String?
+  nextStageDate DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([planId])
+  @@index([visitId])
+}
+
+model TreatmentPlanPayment {
+  id           String        @id @default(cuid())
+  planId       String
+  plan         TreatmentPlan @relation(fields: [planId], references: [id])
+  amount       Decimal       @db.Decimal(10,2)
+  paymentType  String        // "DEPOSIT" | "STAGE" | "BALANCE" | "OTHER"
+  stageId      String?
+  invoiceId    String?
+  invoice      Invoice?      @relation(fields: [invoiceId], references: [id])
+  paidAt       DateTime      @default(now())
+  recordedById String?
+  recordedBy   User?         @relation("PlanPaymentRecorder", fields: [recordedById], references: [id])
+  notes        String?
+
+  @@index([planId])
 }

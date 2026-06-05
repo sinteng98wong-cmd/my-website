@@ -43,3 +43,14 @@ export async function generateStockInvoiceRef(): Promise<string> {
   });
   return `SINV-${ym}-${String(count + 1).padStart(3, "0")}`;
 }
+
+export async function generateTreatmentPlanRef(): Promise<string> {
+  const now = new Date();
+  const ym = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+  const count = await prisma.treatmentPlan.count({
+    where: { createdAt: { gte: startOfMonth, lte: endOfMonth } },
+  });
+  return `TP-${ym}-${String(count + 1).padStart(3, "0")}`;
+}
