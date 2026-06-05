@@ -62,7 +62,8 @@ const NAV: NavEntry[] = [
     children: [
       { key: "invoices",         label: "Invoices",        href: "/invoices"          },
       { key: "ledger",           label: "Daily Ledger",    href: "/ledger"            },
-      { key: "settlements",      label: "Settlements",     href: "/ledger/settlements", financeVisible: true },
+      { key: "settlements",      label: "Settlements",     href: "/ledger/settlements",    financeVisible: true },
+      { key: "monthly-closing",  label: "Monthly Closing", href: "/ledger/monthly-closing", financeVisible: true },
       { key: "commission",       label: "Commission",      href: "/commission"        },
       { key: "payment-vouchers", label: "Payment Vouchers", href: "/payment-vouchers", financeVisible: true },
       { key: "reports",          label: "Reports",         href: "/reports"           },
