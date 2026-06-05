@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { Sidebar } from "@/components/Sidebar";
+import { PortalShell } from "@/components/PortalShell";
 import { getUserClinics, getSelectedClinicId, getEffectiveRole } from "@/lib/selected-clinic";
 import { getModuleAccessForRole } from "@/lib/access-config";
 
@@ -20,17 +20,14 @@ export default async function PortalLayout({ children }: { children: React.React
   const allowedModules = await getModuleAccessForRole(effectiveRole);
 
   return (
-    <div className="flex h-screen overflow-hidden bg-zinc-50">
-      <Sidebar
-        clinics={clinics}
-        selectedClinicId={selectedClinicId}
-        allowedModules={[...allowedModules]}
-        effectiveRole={effectiveRole}
-        baseRole={baseRole}
-      />
-      <main className="flex-1 overflow-y-auto">
-        <div className="p-8 max-w-7xl mx-auto">{children}</div>
-      </main>
-    </div>
+    <PortalShell
+      clinics={clinics}
+      selectedClinicId={selectedClinicId}
+      allowedModules={[...allowedModules]}
+      effectiveRole={effectiveRole}
+      baseRole={baseRole}
+    >
+      {children}
+    </PortalShell>
   );
 }

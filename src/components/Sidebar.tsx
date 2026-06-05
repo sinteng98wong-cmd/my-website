@@ -160,9 +160,10 @@ interface SidebarProps {
   allowedModules:   string[];
   effectiveRole:    string;
   baseRole:         string;
+  onClose?:         () => void;
 }
 
-export function Sidebar({ clinics, selectedClinicId, allowedModules, effectiveRole, baseRole }: SidebarProps) {
+export function Sidebar({ clinics, selectedClinicId, allowedModules, effectiveRole, baseRole, onClose }: SidebarProps) {
   const { data: session } = useSession();
   const pathname           = usePathname();
   const { canAccess, loading } = useAccess();
@@ -221,6 +222,7 @@ export function Sidebar({ clinics, selectedClinicId, allowedModules, effectiveRo
               <Link
                 key={entry.key}
                 href={entry.href}
+                onClick={() => onClose?.()}
                 className={`flex items-center px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                   active
                     ? "bg-white/10 text-white"
@@ -248,6 +250,7 @@ export function Sidebar({ clinics, selectedClinicId, allowedModules, effectiveRo
                     <Link
                       key={child.key}
                       href={child.href}
+                      onClick={() => onClose?.()}
                       className={`flex items-center px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
                         active
                           ? "bg-white/10 text-white"
