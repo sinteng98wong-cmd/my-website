@@ -23,6 +23,29 @@ type ConsentRequestRow = {
   sentBy?: { name: string } | null;
 };
 
+type ConsentRequestDetail = ConsentRequestRow & {
+  responses: Record<string, unknown> | null;
+  signatureUrl: string | null;
+  signedByName: string | null;
+  signedIp: string | null;
+  template: {
+    name: string;
+    type: string;
+    version?: number;
+    introText?: string;
+    consentText?: string;
+    fields: {
+      id: string;
+      label: string;
+      fieldType: string;
+      order: number;
+      options: string[];
+    }[];
+  };
+  clinic: { name: string };
+  patient: { name: string; patientRef: string };
+};
+
 const STATUS_CLASSES: Record<string, string> = {
   PENDING:   "bg-amber-100 text-amber-700",
   COMPLETED: "bg-green-100 text-green-700",
@@ -44,9 +67,22 @@ function buildWhatsAppUrl(phone: string | null | undefined, patientName: string,
 }
 
 async function generateQR(url: string): Promise<string> {
-  // Dynamic import avoids SSR/bundling issues with the qrcode package
   const QRCode = await import("qrcode");
   return QRCode.toDataURL(url);
+}
+
+function formatFieldValue(fieldType: string, value: unknown): string {
+  if (value === null || value === undefined || value === "") return "—";
+  if (Array.isArray(value)) return value.join(", ");
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (fieldType === "DATE" && typeof value === "string") {
+    try {
+      return new Date(value).toLocaleDateString("en-MY", { dateStyle: "medium" });
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -133,8 +169,11 @@ function ConsentRow({
   const [showQrPanel, setShowQrPanel] = useState(false);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [viewDetail, setViewDetail] = useState<ConsentRequestDetail | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [pdfUrl, setPdfUrl] = useState(row.pdfUrl ?? null);
+  const [generatingPdf, setGeneratingPdf] = useState(false);
 
-  // Derive URL safely (client-only values accessed after mount)
   const consentUrl = buildConsentUrl(row.token);
 
   async function handleShowQR() {
@@ -145,7 +184,7 @@ function ConsentRow({
       setShowQrPanel(true);
     } catch (err) {
       console.error("QR generation failed:", err);
-      alert("QR code generation failed. Use the Copy Link button instead.");
+      alert("QR generation failed. Use Copy Link instead.");
     }
   }
 
@@ -188,93 +227,89 @@ function ConsentRow({
     setBusy(false);
   }
 
+  async function handleViewResponses() {
+    setLoadingDetail(true);
+    try {
+      const res = await fetch(`/api/consent/requests/${row.id}`);
+      if (res.ok) {
+        const data = await res.json();
+        setViewDetail(data);
+      } else {
+        alert("Failed to load form responses.");
+      }
+    } finally {
+      setLoadingDetail(false);
+    }
+  }
+
+  async function handleGeneratePdf() {
+    setGeneratingPdf(true);
+    try {
+      const res = await fetch(`/api/consent/requests/${row.id}/pdf`, { method: "POST" });
+      if (res.ok) {
+        const data = await res.json();
+        setPdfUrl(data.pdfUrl);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(`PDF generation failed: ${err.error ?? "unknown error"}`);
+      }
+    } finally {
+      setGeneratingPdf(false);
+    }
+  }
+
   return (
-    <div className="py-4">
-      {/* Row header */}
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-sm font-medium text-slate-900 truncate">{row.template.name}</p>
-          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_CLASSES[row.status]}`}>
-              {row.status}
-            </span>
-            <span className="text-xs text-slate-400">
-              Sent {new Date(row.createdAt).toLocaleDateString("en-MY", { dateStyle: "medium" })}
-            </span>
-            {row.signedAt && (
-              <span className="text-xs text-slate-400">
-                · Signed {new Date(row.signedAt).toLocaleDateString("en-MY", { dateStyle: "medium" })}
+    <>
+      <div className="py-4">
+        {/* Row header */}
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-slate-900 truncate">{row.template.name}</p>
+            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_CLASSES[row.status]}`}>
+                {row.status}
               </span>
-            )}
+              <span className="text-xs text-slate-400">
+                Sent {new Date(row.createdAt).toLocaleDateString("en-MY", { dateStyle: "medium" })}
+              </span>
+              {row.signedAt && (
+                <span className="text-xs text-slate-400">
+                  · Signed {new Date(row.signedAt).toLocaleDateString("en-MY", { dateStyle: "medium" })}
+                </span>
+              )}
+            </div>
           </div>
-        </div>
 
-        <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">
-          {/* COMPLETED */}
-          {row.status === "COMPLETED" && row.pdfUrl && (
-            <a href={row.pdfUrl} target="_blank" rel="noreferrer" className="btn-outline text-xs py-1 px-2">
-              Download PDF
-            </a>
-          )}
-
-          {/* PENDING — primary action: open the form directly */}
-          {row.status === "PENDING" && (
-            <>
-              <a
-                href={`/consent/${row.token}`}
-                target="_blank"
-                rel="noreferrer"
-                className="btn-primary text-xs py-1 px-2"
-              >
-                Open Form ↗
-              </a>
-              <button onClick={handleShowQR} className="btn-outline text-xs py-1 px-2">
-                QR Code
-              </button>
-              <button
-                onClick={() => window.open(buildWhatsAppUrl(patientPhone, patientName, consentUrl), "_blank")}
-                className="btn-outline text-xs py-1 px-2"
-              >
-                WhatsApp
-              </button>
-              <button onClick={handleCopy} className="btn-outline text-xs py-1 px-2">
-                {copied ? "Copied!" : "Copy Link"}
-              </button>
-              <button onClick={handleResend} disabled={busy} className="btn-outline text-xs py-1 px-2">
-                Resend
-              </button>
-              <button
-                onClick={handleCancel}
-                disabled={busy}
-                className="text-xs text-red-500 hover:text-red-700 px-1"
-              >
-                Cancel
-              </button>
-            </>
-          )}
-
-          {/* EXPIRED / CANCELLED */}
-          {(row.status === "EXPIRED" || row.status === "CANCELLED") && (
-            <button onClick={handleResend} disabled={busy} className="btn-primary text-xs py-1 px-2">
-              Resend New Link
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* QR panel — shown when user clicks QR Code button */}
-      {showQrPanel && (
-        <div className="mt-3 p-4 bg-slate-50 rounded-lg border border-slate-200">
-          <div className="flex items-start gap-4">
-            {qrData ? (
-              <img src={qrData} alt="QR code" className="w-28 h-28 flex-shrink-0 border border-slate-200 rounded" />
-            ) : (
-              <div className="w-28 h-28 flex-shrink-0 bg-slate-200 rounded animate-pulse" />
+          <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">
+            {/* COMPLETED */}
+            {row.status === "COMPLETED" && (
+              <>
+                <button
+                  onClick={handleViewResponses}
+                  disabled={loadingDetail}
+                  className="btn-primary text-xs py-1 px-2"
+                >
+                  {loadingDetail ? "Loading…" : "View Responses"}
+                </button>
+                {pdfUrl ? (
+                  <a href={pdfUrl} target="_blank" rel="noreferrer" className="btn-outline text-xs py-1 px-2">
+                    Download PDF
+                  </a>
+                ) : (
+                  <button
+                    onClick={handleGeneratePdf}
+                    disabled={generatingPdf}
+                    className="btn-outline text-xs py-1 px-2"
+                  >
+                    {generatingPdf ? "Generating…" : "Generate PDF"}
+                  </button>
+                )}
+              </>
             )}
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-medium text-slate-700 mb-1">Consent Form Link</p>
-              <p className="text-xs text-slate-500 font-mono break-all mb-3">{consentUrl}</p>
-              <div className="flex gap-2 flex-wrap">
+
+            {/* PENDING */}
+            {row.status === "PENDING" && (
+              <>
                 <a
                   href={`/consent/${row.token}`}
                   target="_blank"
@@ -283,23 +318,201 @@ function ConsentRow({
                 >
                   Open Form ↗
                 </a>
-                <button onClick={handleCopy} className="btn-outline text-xs py-1 px-2">
-                  {copied ? "Copied!" : "Copy Link"}
-                </button>
+                <button onClick={handleShowQR} className="btn-outline text-xs py-1 px-2">QR Code</button>
                 <button
                   onClick={() => window.open(buildWhatsAppUrl(patientPhone, patientName, consentUrl), "_blank")}
                   className="btn-outline text-xs py-1 px-2"
                 >
                   WhatsApp
                 </button>
+                <button onClick={handleCopy} className="btn-outline text-xs py-1 px-2">
+                  {copied ? "Copied!" : "Copy Link"}
+                </button>
+                <button onClick={handleResend} disabled={busy} className="btn-outline text-xs py-1 px-2">Resend</button>
+                <button onClick={handleCancel} disabled={busy} className="text-xs text-red-500 hover:text-red-700 px-1">Cancel</button>
+              </>
+            )}
+
+            {/* EXPIRED / CANCELLED */}
+            {(row.status === "EXPIRED" || row.status === "CANCELLED") && (
+              <button onClick={handleResend} disabled={busy} className="btn-primary text-xs py-1 px-2">
+                Resend New Link
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* QR panel */}
+        {showQrPanel && (
+          <div className="mt-3 p-4 bg-slate-50 rounded-lg border border-slate-200">
+            <div className="flex items-start gap-4">
+              {qrData ? (
+                <img src={qrData} alt="QR code" className="w-28 h-28 flex-shrink-0 border border-slate-200 rounded" />
+              ) : (
+                <div className="w-28 h-28 flex-shrink-0 bg-slate-200 rounded animate-pulse" />
+              )}
+              <div className="flex-1 min-w-0">
+                <p className="text-xs text-slate-500 font-mono break-all mb-3">{consentUrl}</p>
+                <div className="flex gap-2 flex-wrap">
+                  <a href={`/consent/${row.token}`} target="_blank" rel="noreferrer" className="btn-primary text-xs py-1 px-2">
+                    Open Form ↗
+                  </a>
+                  <button onClick={handleCopy} className="btn-outline text-xs py-1 px-2">{copied ? "Copied!" : "Copy Link"}</button>
+                  <button onClick={() => window.open(buildWhatsAppUrl(patientPhone, patientName, consentUrl), "_blank")} className="btn-outline text-xs py-1 px-2">WhatsApp</button>
+                </div>
+              </div>
+            </div>
+            <button onClick={() => setShowQrPanel(false)} className="mt-2 text-xs text-slate-400 underline">Hide</button>
+          </div>
+        )}
+      </div>
+
+      {/* View Responses Modal */}
+      {viewDetail && (
+        <ViewResponsesModal
+          detail={viewDetail}
+          pdfUrl={pdfUrl}
+          onClose={() => setViewDetail(null)}
+          onGeneratePdf={async () => {
+            await handleGeneratePdf();
+            // refresh detail to reflect new pdfUrl
+            const res = await fetch(`/api/consent/requests/${row.id}`);
+            if (res.ok) setViewDetail(await res.json());
+          }}
+          generatingPdf={generatingPdf}
+        />
+      )}
+    </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ViewResponsesModal({
+  detail,
+  pdfUrl,
+  onClose,
+  onGeneratePdf,
+  generatingPdf,
+}: {
+  detail: ConsentRequestDetail;
+  pdfUrl: string | null;
+  onClose: () => void;
+  onGeneratePdf: () => void;
+  generatingPdf: boolean;
+}) {
+  const responses = detail.responses ?? {};
+  const fields = detail.template?.fields ?? [];
+  const signedAt = detail.signedAt
+    ? new Date(detail.signedAt).toLocaleString("en-MY", { dateStyle: "medium", timeStyle: "short" })
+    : "—";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 overflow-y-auto py-6 px-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900">{detail.template.name}</h2>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Signed by {detail.signedByName ?? "—"} · {signedAt}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            {pdfUrl ? (
+              <a href={pdfUrl} target="_blank" rel="noreferrer" className="btn-outline text-sm py-1.5 px-3">
+                Download PDF
+              </a>
+            ) : (
+              <button
+                onClick={onGeneratePdf}
+                disabled={generatingPdf}
+                className="btn-outline text-sm py-1.5 px-3"
+              >
+                {generatingPdf ? "Generating…" : "Generate PDF"}
+              </button>
+            )}
+            <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-2xl leading-none ml-2">×</button>
+          </div>
+        </div>
+
+        <div className="px-6 py-5 space-y-6 max-h-[70vh] overflow-y-auto">
+          {/* Intro text */}
+          {detail.template.introText && (
+            <div className="bg-blue-50 rounded-lg p-3">
+              <p className="text-sm text-blue-800">{detail.template.introText}</p>
+            </div>
+          )}
+
+          {/* Field responses */}
+          {fields.length > 0 && (
+            <div>
+              <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Patient Responses</h3>
+              <div className="space-y-3">
+                {fields.map((f) => {
+                  const value = (responses as Record<string, unknown>)[f.id];
+                  const display = formatFieldValue(f.fieldType, value);
+                  return (
+                    <div key={f.id} className="flex gap-4 py-2 border-b border-slate-50 last:border-0">
+                      <p className="text-sm font-medium text-slate-600 w-2/5 flex-shrink-0">{f.label}</p>
+                      <p className={`text-sm flex-1 ${display === "—" ? "text-slate-300 italic" : "text-slate-900"}`}>
+                        {display}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Consent clause */}
+          {detail.template.consentText && (
+            <div className="bg-slate-50 rounded-lg p-4">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Consent Agreement</p>
+              <p className="text-xs text-slate-600 whitespace-pre-wrap leading-relaxed">{detail.template.consentText}</p>
+            </div>
+          )}
+
+          {/* Signature */}
+          <div>
+            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Signature</h3>
+            {detail.signatureUrl && detail.signatureUrl.startsWith("data:image") ? (
+              <div className="border border-slate-200 rounded-lg p-3 bg-white inline-block">
+                <img
+                  src={detail.signatureUrl}
+                  alt="Patient signature"
+                  className="max-w-xs h-24 object-contain"
+                />
+              </div>
+            ) : (
+              <p className="text-sm text-slate-400 italic">No signature image available</p>
+            )}
+
+            <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+              <div>
+                <p className="text-xs text-slate-400">Signed by</p>
+                <p className="text-slate-900 font-medium">{detail.signedByName ?? "—"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-400">Date &amp; Time</p>
+                <p className="text-slate-900">{signedAt}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-400">IP Address</p>
+                <p className="text-slate-900 font-mono text-xs">{detail.signedIp ?? "—"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-400">Method</p>
+                <p className="text-slate-900">{detail.signMethod ?? "digital_signature"}</p>
               </div>
             </div>
           </div>
-          <button onClick={() => setShowQrPanel(false)} className="mt-2 text-xs text-slate-400 underline">
-            Hide
-          </button>
         </div>
-      )}
+
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-end">
+          <button onClick={onClose} className="btn-outline text-sm py-1.5 px-4">Close</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -349,17 +562,13 @@ function SendConsentModal({
       });
       if (res.ok) {
         const data = await res.json();
-        setResult({
-          consentUrl: data.consentUrl,
-          qrCodeData: data.qrCodeData,
-          token: data.request.token,
-        });
+        setResult({ consentUrl: data.consentUrl, qrCodeData: data.qrCodeData, token: data.request.token });
         onCreated();
       } else {
         const errData = await res.json().catch(() => ({}));
         alert(`Failed to create consent request: ${errData.error ?? res.status}`);
       }
-    } catch (err) {
+    } catch {
       alert("Network error. Please try again.");
     } finally {
       setBusy(false);
@@ -416,56 +625,30 @@ function SendConsentModal({
                 </select>
               </div>
 
-              <button
-                onClick={handleCreate}
-                disabled={!templateId || busy}
-                className="w-full btn-primary py-2"
-              >
+              <button onClick={handleCreate} disabled={!templateId || busy} className="w-full btn-primary py-2">
                 {busy ? "Creating…" : "Create Consent Link"}
               </button>
             </div>
           ) : (
             <div className="space-y-4">
               <p className="text-sm font-medium text-green-700 bg-green-50 rounded-lg px-3 py-2">
-                Consent link created successfully!
+                Consent link created!
               </p>
-
               {result.qrCodeData && (
                 <div className="flex items-start gap-4">
-                  <img
-                    src={result.qrCodeData}
-                    alt="QR code"
-                    className="w-28 h-28 flex-shrink-0 border border-slate-200 rounded"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs text-slate-500 font-mono break-all mb-3">{result.consentUrl}</p>
-                    <p className="text-xs text-slate-500">Patient can scan the QR code or use the buttons below.</p>
-                  </div>
+                  <img src={result.qrCodeData} alt="QR" className="w-28 h-28 flex-shrink-0 border border-slate-200 rounded" />
+                  <p className="text-xs text-slate-500 font-mono break-all mt-1">{result.consentUrl}</p>
                 </div>
               )}
-
               <div className="space-y-2">
-                {/* Primary: open on this device */}
-                <a
-                  href={`/consent/${result.token}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-center justify-center gap-2 w-full btn-primary py-2.5"
-                >
+                <a href={`/consent/${result.token}`} target="_blank" rel="noreferrer"
+                  className="flex items-center justify-center gap-2 w-full btn-primary py-2.5">
                   Open Form on This Device ↗
                 </a>
-
-                {/* WhatsApp */}
-                <a
-                  href={buildWhatsAppUrl(patientPhone, patientName, result.consentUrl)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-center justify-center gap-2 w-full bg-green-500 hover:bg-green-600 text-white text-sm font-medium py-2.5 rounded-lg transition-colors"
-                >
+                <a href={buildWhatsAppUrl(patientPhone, patientName, result.consentUrl)} target="_blank" rel="noreferrer"
+                  className="flex items-center justify-center gap-2 w-full bg-green-500 hover:bg-green-600 text-white text-sm font-medium py-2.5 rounded-lg transition-colors">
                   Send via WhatsApp
                 </a>
-
-                {/* Copy link */}
                 <button onClick={handleCopy} className="w-full btn-outline text-sm py-2.5">
                   {copied ? "Link Copied!" : "Copy Link"}
                 </button>
