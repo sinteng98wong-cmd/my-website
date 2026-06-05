@@ -25,19 +25,17 @@ export function ClinicSwitcher({
   }
 
   return (
-    <div className="px-3 pb-2">
-      <select
-        defaultValue={selected ?? "all"}
-        onChange={handleChange}
-        className="w-full text-xs px-2.5 py-1.5 border border-slate-200 rounded-md bg-slate-50 text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-      >
-        <option value="all">All Branches</option>
-        {clinics.map((c) => (
-          <option key={c.id} value={c.id}>
-            {c.name}
-          </option>
-        ))}
-      </select>
-    </div>
+    <select
+      defaultValue={selected ?? "all"}
+      onChange={handleChange}
+      className="w-full text-xs px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-700/50
+                 text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500/30
+                 focus:border-slate-600 transition-colors cursor-pointer"
+    >
+      <option value="all">All Branches</option>
+      {clinics.map((c) => (
+        <option key={c.id} value={c.id}>{c.name}</option>
+      ))}
+    </select>
   );
 }

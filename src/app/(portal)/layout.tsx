@@ -20,7 +20,7 @@ export default async function PortalLayout({ children }: { children: React.React
   const allowedModules = await getModuleAccessForRole(effectiveRole);
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-50">
+    <div className="flex h-screen overflow-hidden bg-zinc-50">
       <Sidebar
         clinics={clinics}
         selectedClinicId={selectedClinicId}
@@ -29,7 +29,7 @@ export default async function PortalLayout({ children }: { children: React.React
         baseRole={baseRole}
       />
       <main className="flex-1 overflow-y-auto">
-        <div className="p-6 max-w-7xl mx-auto">{children}</div>
+        <div className="p-8 max-w-7xl mx-auto">{children}</div>
       </main>
     </div>
   );
