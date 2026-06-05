@@ -10,3 +10,8 @@ out/
 # Misc
 *.tsbuildinfo
 next-env.d.ts
+
+# Claude Code internal files
+.claude/worktrees/
+lib/license.ts
+lib/license-email.ts
