@@ -111,13 +111,10 @@ export async function submitConsentForm(
       signedIp: ip,
       signMethod: "digital_signature",
       status: "COMPLETED",
+      // Point to the API endpoint — no filesystem write needed
+      pdfUrl: `/api/consent/requests/${request.id}/pdf`,
     },
   });
-
-  // Generate PDF in background
-  import("./consent-pdf")
-    .then((m) => m.generateConsentPdf(updated.id))
-    .catch(console.error);
 
   return updated;
 }

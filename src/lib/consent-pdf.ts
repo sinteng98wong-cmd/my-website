@@ -1,8 +1,6 @@
 import { prisma } from "./prisma";
 import PdfPrinter from "pdfmake";
 import type { TDocumentDefinitions } from "pdfmake/interfaces";
-import fs from "fs";
-import path from "path";
 
 const fonts = {
   Helvetica: {
@@ -29,7 +27,7 @@ function formatFieldValue(fieldType: string, value: unknown): string {
   return String(value);
 }
 
-export async function generateConsentPdf(requestId: string): Promise<string> {
+export async function generateConsentPdfBuffer(requestId: string): Promise<Buffer> {
   const request = await prisma.consentRequest.findUnique({
     where: { id: requestId },
     include: {
@@ -140,27 +138,19 @@ export async function generateConsentPdf(requestId: string): Promise<string> {
     pageMargins: [40, 40, 40, 40],
   };
 
-  const dir = path.join(process.cwd(), "public", "consent-pdfs");
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-
-  const filename = `${requestId}.pdf`;
-  const filepath = path.join(dir, filename);
-  const pdfUrl = `/consent-pdfs/${filename}`;
-
-  await new Promise<void>((resolve, reject) => {
+  return new Promise<Buffer>((resolve, reject) => {
     const doc = printer.createPdfKitDocument(docDef);
     const chunks: Buffer[] = [];
     doc.on("data", (c: Buffer) => chunks.push(c));
-    doc.on("end", () => {
-      fs.writeFile(filepath, Buffer.concat(chunks), (err) => {
-        if (err) reject(err);
-        else resolve();
-      });
-    });
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
     doc.end();
   });
+}
 
+export async function generateConsentPdf(requestId: string): Promise<string> {
+  await generateConsentPdfBuffer(requestId);
+  const pdfUrl = `/api/consent/requests/${requestId}/pdf`;
   await prisma.consentRequest.update({ where: { id: requestId }, data: { pdfUrl } });
   return pdfUrl;
 }

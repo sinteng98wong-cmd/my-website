@@ -171,8 +171,8 @@ function ConsentRow({
   const [copied, setCopied] = useState(false);
   const [viewDetail, setViewDetail] = useState<ConsentRequestDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
-  const [pdfUrl, setPdfUrl] = useState(row.pdfUrl ?? null);
-  const [generatingPdf, setGeneratingPdf] = useState(false);
+  // pdfUrl is always /api/consent/requests/{id}/pdf after completion
+  const pdfUrl = row.pdfUrl ?? `/api/consent/requests/${row.id}/pdf`;
 
   const consentUrl = buildConsentUrl(row.token);
 
@@ -242,22 +242,6 @@ function ConsentRow({
     }
   }
 
-  async function handleGeneratePdf() {
-    setGeneratingPdf(true);
-    try {
-      const res = await fetch(`/api/consent/requests/${row.id}/pdf`, { method: "POST" });
-      if (res.ok) {
-        const data = await res.json();
-        setPdfUrl(data.pdfUrl);
-      } else {
-        const err = await res.json().catch(() => ({}));
-        alert(`PDF generation failed: ${err.error ?? "unknown error"}`);
-      }
-    } finally {
-      setGeneratingPdf(false);
-    }
-  }
-
   return (
     <>
       <div className="py-4">
@@ -291,19 +275,9 @@ function ConsentRow({
                 >
                   {loadingDetail ? "Loading…" : "View Responses"}
                 </button>
-                {pdfUrl ? (
-                  <a href={pdfUrl} target="_blank" rel="noreferrer" className="btn-outline text-xs py-1 px-2">
-                    Download PDF
-                  </a>
-                ) : (
-                  <button
-                    onClick={handleGeneratePdf}
-                    disabled={generatingPdf}
-                    className="btn-outline text-xs py-1 px-2"
-                  >
-                    {generatingPdf ? "Generating…" : "Generate PDF"}
-                  </button>
-                )}
+                <a href={pdfUrl} target="_blank" rel="noreferrer" className="btn-outline text-xs py-1 px-2">
+                  Download PDF
+                </a>
               </>
             )}
 
@@ -373,13 +347,6 @@ function ConsentRow({
           detail={viewDetail}
           pdfUrl={pdfUrl}
           onClose={() => setViewDetail(null)}
-          onGeneratePdf={async () => {
-            await handleGeneratePdf();
-            // refresh detail to reflect new pdfUrl
-            const res = await fetch(`/api/consent/requests/${row.id}`);
-            if (res.ok) setViewDetail(await res.json());
-          }}
-          generatingPdf={generatingPdf}
         />
       )}
     </>
@@ -392,14 +359,10 @@ function ViewResponsesModal({
   detail,
   pdfUrl,
   onClose,
-  onGeneratePdf,
-  generatingPdf,
 }: {
   detail: ConsentRequestDetail;
-  pdfUrl: string | null;
+  pdfUrl: string;
   onClose: () => void;
-  onGeneratePdf: () => void;
-  generatingPdf: boolean;
 }) {
   const responses = detail.responses ?? {};
   const fields = detail.template?.fields ?? [];
@@ -419,19 +382,9 @@ function ViewResponsesModal({
             </p>
           </div>
           <div className="flex items-center gap-2">
-            {pdfUrl ? (
-              <a href={pdfUrl} target="_blank" rel="noreferrer" className="btn-outline text-sm py-1.5 px-3">
-                Download PDF
-              </a>
-            ) : (
-              <button
-                onClick={onGeneratePdf}
-                disabled={generatingPdf}
-                className="btn-outline text-sm py-1.5 px-3"
-              >
-                {generatingPdf ? "Generating…" : "Generate PDF"}
-              </button>
-            )}
+            <a href={pdfUrl} target="_blank" rel="noreferrer" className="btn-outline text-sm py-1.5 px-3">
+              Download PDF
+            </a>
             <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-2xl leading-none ml-2">×</button>
           </div>
         </div>
