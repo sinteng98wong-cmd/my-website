@@ -62,6 +62,7 @@ const NAV: NavEntry[] = [
     children: [
       { key: "invoices",         label: "Invoices",        href: "/invoices"          },
       { key: "ledger",           label: "Daily Ledger",    href: "/ledger"            },
+      { key: "settlements",      label: "Settlements",     href: "/ledger/settlements", financeVisible: true },
       { key: "commission",       label: "Commission",      href: "/commission"        },
       { key: "payment-vouchers", label: "Payment Vouchers", href: "/payment-vouchers", financeVisible: true },
       { key: "reports",          label: "Reports",         href: "/reports"           },
@@ -124,8 +125,9 @@ const NAV: NavEntry[] = [
     key:   "compliance",
     label: "Compliance",
     children: [
-      { key: "licenses",      label: "Licenses",      href: "/licenses"                                     },
-      { key: "license-types", label: "License Types", href: "/admin/license-types", superAdminOnly: true    },
+      { key: "licenses",           label: "Licenses",           href: "/licenses"                                                   },
+      { key: "license-types",      label: "License Types",      href: "/admin/license-types",      superAdminOnly: true             },
+      { key: "consent-templates",  label: "Consent Templates",  href: "/admin/consent-templates",  managerOnly: true                },
     ],
   },
 

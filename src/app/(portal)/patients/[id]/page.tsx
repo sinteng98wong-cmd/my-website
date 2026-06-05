@@ -10,6 +10,7 @@ import { MCSection } from "@/components/MCSection";
 import { WalkInButton } from "./WalkInButton";
 import { DepositBalanceBadge } from "@/components/DepositBalanceBadge";
 import { PatientDepositTab } from "@/components/PatientDepositTab";
+import { ConsentFormsTab } from "@/components/ConsentFormsTab";
 import { getDepositBalance } from "@/lib/deposit";
 
 // re-used in two places below
@@ -131,10 +132,11 @@ export default async function PatientDetailPage({
   const outstanding    = totalBilled - totalCollected;
 
   const TABS = [
-    { key: "visits",  label: "Visit History" },
-    { key: "chart",   label: "Dental Chart" },
-    { key: "mc",      label: "Medical Certificate" },
-    { key: "deposit", label: "Deposit / Wallet" },
+    { key: "visits",   label: "Visit History" },
+    { key: "chart",    label: "Dental Chart" },
+    { key: "mc",       label: "Medical Certificate" },
+    { key: "deposit",  label: "Deposit / Wallet" },
+    { key: "consent",  label: "Consent Forms" },
   ];
 
   return (
@@ -397,6 +399,16 @@ export default async function PatientDetailPage({
               clinicId={patient.homeClinicId}
               clinics={clinics}
               canRefund={canRefund}
+            />
+          )}
+
+          {/* ── Consent Forms ── */}
+          {tab === "consent" && (
+            <ConsentFormsTab
+              patientId={params.id}
+              clinicId={patient.homeClinicId}
+              patientName={patient.name}
+              patientPhone={patient.phone}
             />
           )}
         </div>

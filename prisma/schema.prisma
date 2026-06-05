@@ -128,6 +128,8 @@ model Clinic {
   creditNotes          EInvoiceCreditNote[]
   debitNotes           EInvoiceDebitNote[]
   licenses             License[]
+  paymentMethodConfigs PaymentMethodConfig[]
+  consentRequests      ConsentRequest[]
 
   // Branch contact info
   address    String?
@@ -245,6 +247,7 @@ model User {
   rejectedPVs         PaymentVoucher[] @relation("PVRejected")
   paidPVs             PaymentVoucher[] @relation("PVPaid")
   createdLicenses    License[]      @relation("LicenseCreator")
+  sentConsents       ConsentRequest[] @relation("ConsentSender")
   createdAt          DateTime       @default(now())
 }
 
@@ -485,6 +488,7 @@ model Patient {
   referralCommissions ReferralCommission[]
   deposits      PatientDeposit[]
   salesReturns  SalesReturn[]
+  consentRequests ConsentRequest[]
   createdAt     DateTime  @default(now())
   deletedAt     DateTime?
   deletedBy     String?
@@ -788,9 +792,18 @@ model InvoicePayment {
   panelProviderId String?
   panelProvider   PanelProvider? @relation(fields: [panelProviderId], references: [id])
   collectedAt     DateTime?
+  // Settlement tracking — when the money is actually expected / received
+  expectedSettlementDate DateTime?
+  settledDate            DateTime?
+  settledAmount          Decimal?  @db.Decimal(10,2)
+  // Bank/acquirer that determines the settlement delay for this payment
+  settlementBankId String?
+  settlementBank   SettlementBank? @relation(fields: [settlementBankId], references: [id])
   createdAt       DateTime       @default(now())
   @@index([invoiceId])
   @@index([method])
+  @@index([expectedSettlementDate])
+  @@index([settlementBankId])
 }
 
 // ── Doctor Commission ────────────────────────────────────────────────────
@@ -2204,5 +2217,130 @@ model License {
   @@index([clinicId, status])
   @@index([staffProfileId, status])
   @@index([expiryDate])
+  @@index([status])
+}
+
+// ── Payment Method Settlement Config ──────────────────────────────────────
+// Per-clinic, per-method settlement timing (days until money is received) and
+// merchant charge rate. Drives expectedSettlementDate on InvoicePayment.
+
+model PaymentMethodConfig {
+  id             String        @id @default(cuid())
+  clinicId       String
+  clinic         Clinic        @relation(fields: [clinicId], references: [id])
+  method         PaymentMethod
+  subType        String?       // e.g. "VISA_MC" | "AMEX" for CREDIT_CARD
+  chargeRate     Decimal       @default(0) @db.Decimal(5,2)
+  settlementDays Int           @default(0)
+  isActive       Boolean       @default(true)
+  updatedAt      DateTime      @updatedAt
+
+  @@unique([clinicId, method, subType])
+  @@index([clinicId])
+}
+
+// ── Settlement Bank / Acquirer ────────────────────────────────────────────
+// The bank/acquirer that processes a payment determines how many days until
+// the money is actually received (e.g. Maybank T+2, CIMB T+3). Picked per
+// payment; drives expectedSettlementDate.
+
+model SettlementBank {
+  id             String           @id @default(cuid())
+  name           String
+  settlementDays Int              @default(0)
+  isActive       Boolean          @default(true)
+  payments       InvoicePayment[]
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@index([isActive])
+}
+
+// ── Digital Consent Forms ─────────────────────────────────────────────────
+
+enum ConsentFormType {
+  GENERAL
+  TREATMENT
+}
+
+enum ConsentFieldType {
+  TEXT
+  LONG_TEXT
+  YES_NO
+  CHECKBOX
+  MULTIPLE_CHOICE
+  DATE
+  SIGNATURE
+}
+
+enum ConsentRequestStatus {
+  PENDING
+  COMPLETED
+  EXPIRED
+  CANCELLED
+}
+
+model ConsentFormTemplate {
+  id            String             @id @default(cuid())
+  name          String
+  type          ConsentFormType
+  treatmentType String?
+  description   String?
+  introText     String?
+  consentText   String?
+  isActive      Boolean            @default(true)
+  version       Int                @default(1)
+  fields        ConsentFormField[]
+  requests      ConsentRequest[]
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  @@index([type, isActive])
+}
+
+model ConsentFormField {
+  id            String              @id @default(cuid())
+  templateId    String
+  template      ConsentFormTemplate @relation(fields: [templateId], references: [id])
+  label         String
+  fieldType     ConsentFieldType
+  isRequired    Boolean             @default(false)
+  order         Int
+  options       String[]
+  placeholder   String?
+  helpText      String?
+  showIfFieldId String?
+  showIfValue   String?
+  createdAt     DateTime            @default(now())
+
+  @@index([templateId])
+}
+
+model ConsentRequest {
+  id              String               @id @default(cuid())
+  templateId      String
+  template        ConsentFormTemplate  @relation(fields: [templateId], references: [id])
+  patientId       String
+  patient         Patient              @relation(fields: [patientId], references: [id])
+  clinicId        String
+  clinic          Clinic               @relation(fields: [clinicId], references: [id])
+  treatmentPlanId String?
+  token           String               @unique
+  expiresAt       DateTime
+  status          ConsentRequestStatus @default(PENDING)
+  responses       Json?
+  signatureUrl    String?
+  signedByName    String?
+  signedAt        DateTime?
+  signedIp        String?
+  signMethod      String?
+  pdfUrl          String?
+  sentById        String?
+  sentBy          User?                @relation("ConsentSender", fields: [sentById], references: [id])
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  @@index([patientId])
+  @@index([token])
   @@index([status])
 }
