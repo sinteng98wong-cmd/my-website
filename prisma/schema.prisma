@@ -161,6 +161,7 @@ model Clinic {
   // Reconciliation
   monthlyRecons        MonthlyRecon[]
   panelRemittances     PanelRemittance[]
+  doctorDailySignoffs  DoctorDailySignoff[]
 
   @@index([entityId])
 }
@@ -299,6 +300,7 @@ model DoctorProfile {
   engagements            LocumEngagement[]
   treatments             Treatment[]
   reconciliationStatements LocumReconciliationStatement[]
+  dailySignoffs            DoctorDailySignoff[]
 }
 
 model DoctorTreatmentRate {
@@ -871,12 +873,33 @@ model LocumReconciliationStatement {
   splitRate    Decimal       @db.Decimal(5,2)   // e.g. 42.00
   payload      Json          // Full typed payload (see commission.service.ts)
   finalPayout  Decimal       @db.Decimal(10,2)
-  status       String        @default("DRAFT")  // DRAFT | APPROVED | LOCKED
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+  // DRAFT → DOCTOR_SIGNED → CM_APPROVED → FINANCE_APPROVED → LOCKED
+  status            String    @default("DRAFT")
+  doctorSignedAt    DateTime?
+  cmApprovedAt      DateTime?
+  cmApprovedBy      String?
+  financeApprovedAt DateTime?
+  financeApprovedBy String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
   @@unique([doctorId, month])
   @@index([doctorId])
   @@index([month])
+}
+
+model DoctorDailySignoff {
+  id                String        @id @default(cuid())
+  doctorId          String
+  doctor            DoctorProfile @relation(fields: [doctorId], references: [id])
+  clinicId          String
+  clinic            Clinic        @relation(fields: [clinicId], references: [id])
+  date              DateTime      @db.Date
+  signedAt          DateTime
+  treatmentSnapshot Json
+
+  @@unique([doctorId, clinicId, date])
+  @@index([doctorId])
+  @@index([date])
 }
 
 model StaffCommission {

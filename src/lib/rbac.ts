@@ -7,11 +7,13 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "./auth";
 
 export type Permission =
-  | "clinic:all"           // Super Admin only
-  | "clinic:own"           // Clinic Manager — own clinic
-  | "commission:lock"      // Clinic Manager
-  | "commission:view:own"  // Doctor — own commission only
-  | "commission:view:all"  // Finance, Clinic Manager, Super Admin
+  | "clinic:all"              // Super Admin only
+  | "clinic:own"              // Clinic Manager — own clinic
+  | "commission:lock"         // Finance, Super Admin
+  | "commission:sign"         // Doctor — sign own daily/monthly statement
+  | "commission:cm-approve"   // Clinic Manager — first-level approval
+  | "commission:view:own"     // Doctor — own commission only
+  | "commission:view:all"     // Finance, Clinic Manager, Super Admin
   | "staff:manage"         // Clinic Manager
   | "schedule:manage"      // Clinic Manager
   | "schedule:view"        // All roles
@@ -39,13 +41,13 @@ const ROLE_PERMISSIONS: Record<string, Permission[]> = {
     "config:manage", "schedule:view",
   ],
   CLINIC_MANAGER: [
-    "clinic:own", "commission:lock", "commission:view:all",
+    "clinic:own", "commission:lock", "commission:cm-approve", "commission:view:all",
     "staff:manage", "schedule:manage", "schedule:view",
     "patient:manage", "invoice:manage", "pool:manage",
     "ledger:view",
   ],
   DOCTOR: [
-    "commission:view:own", "schedule:view", "patient:manage",
+    "commission:view:own", "commission:sign", "schedule:view", "patient:manage",
   ],
   NURSE: [
     "schedule:view", "patient:manage",

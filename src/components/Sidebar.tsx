@@ -15,6 +15,7 @@ type NavChild = {
   superAdminOnly?:  boolean;
   managerOnly?:     boolean;
   financeVisible?:  boolean;
+  doctorOnly?:      boolean;
 };
 
 type NavItem = {
@@ -66,6 +67,7 @@ const NAV: NavEntry[] = [
       { key: "ledger",           label: "Daily Ledger",    href: "/ledger"                                  },
       { key: "reconciliation",      label: "Reconciliation",   href: "/ledger/reconciliation",     financeVisible: true },
       { key: "commission",       label: "Commission",      href: "/commission"                              },
+      { key: "commission-daily", label: "Daily Sign-off",  href: "/commission/daily", doctorOnly: true     },
       { key: "payment-vouchers", label: "Payment Vouchers", href: "/payment-vouchers",     financeVisible: true },
       { key: "reports",          label: "Reports",         href: "/reports"                                 },
     ],
@@ -180,6 +182,7 @@ export function Sidebar({ clinics, selectedClinicId, allowedModules, effectiveRo
   function childVisible(child: NavChild) {
     if (isSuperAdmin) return true;
     if (child.superAdminOnly) return false;
+    if (child.doctorOnly)     return role === "DOCTOR";
     if (child.managerOnly)    return ["CLINIC_MANAGER"].includes(role);
     if (child.financeVisible) return ["FINANCE", "CLINIC_MANAGER"].includes(role);
     return true;
