@@ -158,6 +158,9 @@ model Clinic {
   paymentVouchers      PaymentVoucher[]
   interBranchPVs       PaymentVoucher[]  @relation("InterBranchFrom")
   supplierInvoicesFrom SupplierInvoice[] @relation("SupplierInvoiceFromClinic")
+  // Reconciliation
+  monthlyRecons        MonthlyRecon[]
+  panelRemittances     PanelRemittance[]
 
   @@index([entityId])
 }
@@ -173,6 +176,7 @@ model PanelProvider {
   tin             String?
   registrationNo  String?
   eInvoiceBatches EInvoiceBatch[]
+  remittances     PanelRemittance[]
 }
 
 // ── Users ────────────────────────────────────────────────────────────────
@@ -254,6 +258,10 @@ model User {
   createdPlans         TreatmentPlan[]        @relation("PlanCreator")
   performedStages      TreatmentStage[]       @relation("StagePerformer")
   recordedPlanPayments TreatmentPlanPayment[] @relation("PlanPaymentRecorder")
+  // Reconciliation relations
+  lockedRecons               MonthlyRecon[]           @relation("ReconLockedBy")
+  confirmedMethodSettlements MethodSettlementEntry[]  @relation("MethodSettlementConfirmedBy")
+  createdRemittances         PanelRemittance[]        @relation("PanelRemittanceCreatedBy")
   createdAt            DateTime               @default(now())
 }
 
@@ -808,8 +816,9 @@ model InvoicePayment {
   settledAmount          Decimal?  @db.Decimal(10,2)
   // Bank/acquirer that determines the settlement delay for this payment
   settlementBankId String?
-  settlementBank   SettlementBank? @relation(fields: [settlementBankId], references: [id])
-  createdAt       DateTime       @default(now())
+  settlementBank   SettlementBank?      @relation(fields: [settlementBankId], references: [id])
+  remittanceItems  PanelRemittanceItem[]
+  createdAt        DateTime             @default(now())
   @@index([invoiceId])
   @@index([method])
   @@index([expectedSettlementDate])
@@ -2473,4 +2482,82 @@ model TreatmentPlanPayment {
   notes        String?
 
   @@index([planId])
+}
+
+// ── Monthly Reconciliation ─────────────────────────────────────────────────
+
+enum ReconStatus {
+  OPEN
+  LOCKED
+}
+
+model MonthlyRecon {
+  id            String                  @id @default(cuid())
+  clinicId      String
+  clinic        Clinic                  @relation(fields: [clinicId], references: [id])
+  month         String                  // "YYYY-MM"
+  status        ReconStatus             @default(OPEN)
+  lockedAt      DateTime?
+  lockedById    String?
+  lockedBy      User?                   @relation("ReconLockedBy", fields: [lockedById], references: [id])
+  notes         String?
+  methodEntries MethodSettlementEntry[]
+  remittances   PanelRemittance[]
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @updatedAt
+
+  @@unique([clinicId, month])
+  @@index([clinicId])
+}
+
+model MethodSettlementEntry {
+  id              String        @id @default(cuid())
+  reconId         String
+  recon           MonthlyRecon  @relation(fields: [reconId], references: [id], onDelete: Cascade)
+  method          PaymentMethod
+  confirmedAmount Decimal       @db.Decimal(10,2)
+  notes           String?
+  confirmedById   String?
+  confirmedBy     User?         @relation("MethodSettlementConfirmedBy", fields: [confirmedById], references: [id])
+  confirmedAt     DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@unique([reconId, method])
+  @@index([reconId])
+}
+
+model PanelRemittance {
+  id              String               @id @default(cuid())
+  reconId         String
+  recon           MonthlyRecon         @relation(fields: [reconId], references: [id], onDelete: Cascade)
+  clinicId        String
+  clinic          Clinic               @relation(fields: [clinicId], references: [id])
+  panelProviderId String
+  panelProvider   PanelProvider        @relation(fields: [panelProviderId], references: [id])
+  remittanceRef   String?
+  receivedDate    DateTime
+  totalAmount     Decimal              @db.Decimal(10,2)
+  notes           String?
+  items           PanelRemittanceItem[]
+  createdById     String?
+  createdBy       User?                @relation("PanelRemittanceCreatedBy", fields: [createdById], references: [id])
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  @@index([reconId])
+  @@index([clinicId])
+}
+
+model PanelRemittanceItem {
+  id               String          @id @default(cuid())
+  remittanceId     String
+  remittance       PanelRemittance @relation(fields: [remittanceId], references: [id], onDelete: Cascade)
+  invoicePaymentId String
+  invoicePayment   InvoicePayment  @relation(fields: [invoicePaymentId], references: [id])
+  allocatedAmount  Decimal         @db.Decimal(10,2)
+  matchType        String          @default("AUTO")   // "AUTO" | "MANUAL"
+  createdAt        DateTime        @default(now())
+
+  @@unique([remittanceId, invoicePaymentId])
+  @@index([invoicePaymentId])
 }
