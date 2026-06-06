@@ -8,6 +8,8 @@ const Schema = z.object({
   method:          z.string().min(1),
   confirmedAmount: z.number().nonnegative(),
   notes:           z.string().optional(),
+  // null/omitted = current-month entry; "YYYY-MM" = carry-forward received from a prior month
+  sourceMonth:     z.string().regex(/^\d{4}-\d{2}$/).optional().nullable(),
 });
 
 export async function POST(
@@ -30,12 +32,13 @@ export async function POST(
   if (!parsed.success)
     return NextResponse.json({ error: "Validation failed", issues: parsed.error.flatten() }, { status: 422 });
 
-  const { method, confirmedAmount, notes } = parsed.data;
+  const { method, confirmedAmount, notes, sourceMonth = null } = parsed.data;
 
+  const sm = sourceMonth ?? null;
   const entry = await prisma.methodSettlementEntry.upsert({
-    where:  { reconId_method: { reconId: params.id, method: method as any } },
+    where:  { reconId_method_sourceMonth: { reconId: params.id, method: method as any, sourceMonth: sm as string } },
     update: { confirmedAmount, notes: notes ?? null, confirmedById: userId, confirmedAt: new Date() },
-    create: { reconId: params.id, method: method as any, confirmedAmount, notes: notes ?? null, confirmedById: userId },
+    create: { reconId: params.id, method: method as any, sourceMonth: sm, confirmedAmount, notes: notes ?? null, confirmedById: userId },
   });
 
   return NextResponse.json(entry);

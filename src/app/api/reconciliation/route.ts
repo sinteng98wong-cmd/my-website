@@ -104,7 +104,8 @@ export async function GET(req: NextRequest) {
 
   const methodSettlement = SETTLEMENT_METHODS.map(method => {
     const data      = methodMap[method];
-    const confirmed = recon.methodEntries.find(e => e.method === method) ?? null;
+    // current-month entry (sourceMonth IS NULL)
+    const confirmed = recon.methodEntries.find(e => e.method === method && e.sourceMonth === null) ?? null;
     return {
       method,
       billed:        data.billed,
@@ -114,6 +115,45 @@ export async function GET(req: NextRequest) {
       variance:      confirmed ? Number(confirmed.confirmedAmount) - data.inMonth : null,
     };
   }).filter(m => m.billed > 0);
+
+  // ── Carry-forward: prior-month invoice payments whose expectedSettlementDate falls THIS month ──
+  const carryForwardPayments = await prisma.invoicePayment.findMany({
+    where: {
+      method:                  { notIn: ["PANEL", "DEPOSIT"] },
+      expectedSettlementDate:  { gte: monthStart, lt: monthEnd },
+      invoice: {
+        deletedAt: null,
+        visit: {
+          clinicId,
+          // invoice is from a PRIOR month (visitDate before this month)
+          visitDate: { lt: monthStart },
+        },
+      },
+    },
+    include: {
+      invoice: { include: { visit: { select: { visitDate: true } } } },
+    },
+  });
+
+  // Group carry-forward by sourceMonth + method
+  const cfMap = new Map<string, { method: string; sourceMonth: string; expected: number }>();
+  for (const ip of carryForwardPayments) {
+    const srcMonth = ip.invoice.visit.visitDate.toISOString().slice(0, 7);
+    const key      = `${srcMonth}::${ip.method}`;
+    if (!cfMap.has(key)) cfMap.set(key, { method: ip.method, sourceMonth: srcMonth, expected: 0 });
+    cfMap.get(key)!.expected += Number(ip.amount);
+  }
+
+  const carryForward = Array.from(cfMap.values()).map(cf => {
+    const entry = recon.methodEntries.find(e => e.method === cf.method && e.sourceMonth === cf.sourceMonth) ?? null;
+    return {
+      method:      cf.method,
+      sourceMonth: cf.sourceMonth,
+      expected:    Math.round(cf.expected * 100) / 100,
+      confirmed:   entry ? { amount: Number(entry.confirmedAmount), notes: entry.notes, by: entry.confirmedBy?.name ?? null } : null,
+      variance:    entry ? Number(entry.confirmedAmount) - cf.expected : null,
+    };
+  }).sort((a, b) => a.sourceMonth.localeCompare(b.sourceMonth) || a.method.localeCompare(b.method));
 
   // ── Track B: panel invoice payments (for this month) ──────────────────
   const panelPayments = invoicePayments.filter(ip => ip.method === "PANEL");
@@ -239,6 +279,7 @@ export async function GET(req: NextRequest) {
       panelOutstanding: Math.round(panelOutstanding * 100) / 100,
     },
     methodSettlement,
+    carryForward,
     remittances: recon.remittances,
     panelSummary,
     dailyRows,

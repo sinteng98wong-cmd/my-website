@@ -14,6 +14,12 @@ type MethodRow = {
   variance: number | null;
 };
 
+type CarryForwardRow = {
+  method: string; sourceMonth: string; expected: number;
+  confirmed: { amount: number; notes: string | null; by: string | null } | null;
+  variance: number | null;
+};
+
 type RemittanceItem = {
   id: string; invoicePaymentId: string; allocatedAmount: number; matchType: string;
   invoicePayment: {
@@ -52,6 +58,7 @@ type ReconData = {
   recon: { id: string; clinicId: string; month: string; status: string; lockedAt: string | null; notes: string | null };
   summary: { totalBilled: number; settledInMonth: number; settledNextMonths: number; panelMatched: number; panelOutstanding: number };
   methodSettlement: MethodRow[];
+  carryForward: CarryForwardRow[];
   remittances: Remittance[];
   panelSummary: PanelLine[];
   dailyRows: DayRow[];
@@ -94,7 +101,7 @@ export function ReconClient({ clinics, panelProviders: initialProviders, initial
   const [loading,        setLoading]        = useState(false);
   const [error,          setError]          = useState("");
 
-  // Track A: editing
+  // Track A: editing (key = method for current month; "YYYY-MM::method" for carry-forward)
   const [methodDraft,    setMethodDraft]    = useState<Record<string, string>>({});
   const [savingMethods,  setSavingMethods]  = useState(false);
 
@@ -146,6 +153,9 @@ export function ReconClient({ clinics, panelProviders: initialProviders, initial
       for (const m of d.methodSettlement) {
         drafts[m.method] = String(m.confirmed?.amount ?? m.inMonth);
       }
+      for (const cf of d.carryForward) {
+        drafts[`${cf.sourceMonth}::${cf.method}`] = String(cf.confirmed?.amount ?? cf.expected);
+      }
       setMethodDraft(drafts);
     } else {
       setError("Failed to load reconciliation data");
@@ -159,11 +169,17 @@ export function ReconClient({ clinics, panelProviders: initialProviders, initial
   async function saveMethodConfirmations() {
     if (!data) return;
     setSavingMethods(true);
-    for (const [method, val] of Object.entries(methodDraft)) {
+    for (const [key, val] of Object.entries(methodDraft)) {
+      const isCarryForward = key.includes("::");
+      const [sourceMonth, method] = isCarryForward ? key.split("::") : [undefined, key];
       await fetch(`/api/reconciliation/${data.recon.id}/method-settlement`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ method, confirmedAmount: parseFloat(val) || 0 }),
+        body: JSON.stringify({
+          method,
+          confirmedAmount: parseFloat(val) || 0,
+          ...(sourceMonth ? { sourceMonth } : {}),
+        }),
       });
     }
     setSavingMethods(false);
@@ -372,6 +388,64 @@ export function ReconClient({ clinics, panelProviders: initialProviders, initial
               </tbody>
             </table>
           </div>
+
+          {/* ── Carry-Forward Receipts ── */}
+          {data.carryForward.length > 0 && (
+            <div className="card overflow-hidden">
+              <div className="px-5 py-3 border-b border-slate-200 bg-blue-50 flex items-center justify-between">
+                <div>
+                  <h2 className="text-sm font-semibold text-blue-800">Carry-Forward Receipts — Prior Month Settlements Due This Month</h2>
+                  <p className="text-xs text-blue-600 mt-0.5">These are payments from earlier invoices that were expected to arrive this month. Confirm what you actually received.</p>
+                </div>
+                {!isLocked && (
+                  <button onClick={saveMethodConfirmations} disabled={savingMethods}
+                    className="btn-primary text-xs py-1 px-3 shrink-0">
+                    {savingMethods ? "Saving…" : "Save Confirmations"}
+                  </button>
+                )}
+              </div>
+              <table className="w-full text-sm">
+                <thead className="table-header">
+                  <tr>
+                    {["From Month", "Method", "Expected to Arrive", "You Confirm Received", "Variance"].map(h => (
+                      <th key={h} className="px-5 py-2.5 text-left text-xs font-medium text-slate-500 uppercase tracking-wide">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.carryForward.map(row => {
+                    const draftKey = `${row.sourceMonth}::${row.method}`;
+                    const confirmed = parseFloat(methodDraft[draftKey] || "0") || 0;
+                    const variance  = confirmed - row.expected;
+                    return (
+                      <tr key={draftKey} className="table-row">
+                        <td className="px-5 py-3 font-medium text-slate-700">
+                          {new Date(row.sourceMonth + "-01").toLocaleDateString("en-MY", { year: "numeric", month: "long" })}
+                        </td>
+                        <td className="px-5 py-3 text-slate-600">{methodLabel(row.method)}</td>
+                        <td className="px-5 py-3 font-mono text-blue-700">{fmt(row.expected)}</td>
+                        <td className="px-5 py-3">
+                          {isLocked ? (
+                            <span className="font-mono text-slate-700">{fmt(row.confirmed?.amount ?? row.expected)}</span>
+                          ) : (
+                            <input
+                              className="form-input text-sm w-32 font-mono"
+                              type="number" step="0.01" min="0"
+                              value={methodDraft[draftKey] ?? ""}
+                              onChange={e => setMethodDraft(d => ({ ...d, [draftKey]: e.target.value }))}
+                            />
+                          )}
+                        </td>
+                        <td className={`px-5 py-3 font-mono font-semibold ${Math.abs(variance) < 0.01 ? "text-green-600" : variance > 0 ? "text-blue-600" : "text-red-600"}`}>
+                          {Math.abs(variance) < 0.01 ? "—" : (variance > 0 ? "+" : "") + fmt(variance)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           {/* ── Track B: Panel Matching ── */}
           <div className="card overflow-hidden">

@@ -2515,6 +2515,8 @@ model MethodSettlementEntry {
   reconId         String
   recon           MonthlyRecon  @relation(fields: [reconId], references: [id], onDelete: Cascade)
   method          PaymentMethod
+  // null = current-month settlement; "YYYY-MM" = carry-forward from a prior month received this month
+  sourceMonth     String?
   confirmedAmount Decimal       @db.Decimal(10,2)
   notes           String?
   confirmedById   String?
@@ -2522,7 +2524,7 @@ model MethodSettlementEntry {
   confirmedAt     DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
-  @@unique([reconId, method])
+  @@unique([reconId, method, sourceMonth])
   @@index([reconId])
 }
 
