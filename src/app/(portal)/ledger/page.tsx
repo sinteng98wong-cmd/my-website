@@ -226,7 +226,7 @@ export default async function LedgerPage({
       {entries.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
           {[
-            { label: "Cash",    value: cashTotal,    sub: `Cash: ${fmt(T.cashCurr)} · Next Day: ${fmt(T.cashNext)}`, color: "text-green-700"  },
+            { label: "Cash",    value: cashTotal,    sub: "Cash collections",                                          color: "text-green-700"  },
             { label: "Card",    value: cardTotal,    sub: "Credit card",                                           color: "text-blue-700"   },
             { label: "Digital", value: digitalTotal, sub: `FPX · eWallet · Atome`,                                color: "text-indigo-700" },
             { label: "Panel",   value: panelTotal,   sub: `${panelProviders.length} provider(s)`,                 color: "text-purple-700" },
@@ -254,7 +254,6 @@ export default async function LedgerPage({
                 <th className="px-4 py-2.5 text-left text-xs font-medium text-slate-500 uppercase tracking-wide border-r border-slate-200">Branch</th>
                 <th className="px-4 py-2.5 text-right text-xs font-medium text-slate-500 uppercase tracking-wide">Pts</th>
                 <th className="px-4 py-2.5 text-right text-xs font-medium text-green-600 uppercase tracking-wide">Cash</th>
-                <th className="px-4 py-2.5 text-right text-xs font-medium text-green-500 uppercase tracking-wide">Cash (Next Day)</th>
                 <th className="px-4 py-2.5 text-right text-xs font-medium text-blue-600 uppercase tracking-wide">Card</th>
                 <th className="px-4 py-2.5 text-right text-xs font-medium text-indigo-600 uppercase tracking-wide">FPX</th>
                 <th className="px-4 py-2.5 text-right text-xs font-medium text-indigo-600 uppercase tracking-wide">eWallet</th>
@@ -267,14 +266,13 @@ export default async function LedgerPage({
             </thead>
             <tbody>
               {clinicRows.length === 0 && (
-                <tr><td colSpan={12 + panelProviders.length} className="px-5 py-8 text-center text-slate-400">No ledger entries for this period</td></tr>
+                <tr><td colSpan={11 + panelProviders.length} className="px-5 py-8 text-center text-slate-400">No ledger entries for this period</td></tr>
               )}
               {clinicRows.map(c => (
                 <tr key={c.name} className="table-row">
                   <td className="px-4 py-3 font-medium text-slate-900 border-r border-slate-100">{c.name}</td>
                   <td className="px-4 py-3 text-right text-slate-600">{c.patients}</td>
-                  <td className="px-4 py-3 text-right font-mono text-green-700">{fmtShort(c.cashCurr)}</td>
-                  <td className="px-4 py-3 text-right font-mono text-green-500">{fmtShort(c.cashNext)}</td>
+                  <td className="px-4 py-3 text-right font-mono text-green-700">{fmtShort(c.cashCurr + c.cashNext)}</td>
                   <td className="px-4 py-3 text-right font-mono text-blue-700">{fmtShort(c.card)}</td>
                   <td className="px-4 py-3 text-right font-mono text-indigo-700">{fmtShort(c.fpx)}</td>
                   <td className="px-4 py-3 text-right font-mono text-indigo-600">{fmtShort(c.ewallet)}</td>
@@ -289,8 +287,7 @@ export default async function LedgerPage({
                 <tr className="bg-slate-50 border-t-2 border-slate-300 font-semibold text-sm">
                   <td className="px-4 py-3 text-slate-900 border-r border-slate-100">TOTAL</td>
                   <td className="px-4 py-3 text-right">{T.patients}</td>
-                  <td className="px-4 py-3 text-right font-mono text-green-700">{fmt(T.cashCurr)}</td>
-                  <td className="px-4 py-3 text-right font-mono text-green-500">{fmt(T.cashNext)}</td>
+                  <td className="px-4 py-3 text-right font-mono text-green-700">{fmt(T.cashCurr + T.cashNext)}</td>
                   <td className="px-4 py-3 text-right font-mono text-blue-700">{fmt(T.card)}</td>
                   <td className="px-4 py-3 text-right font-mono text-indigo-700">{fmt(T.fpx)}</td>
                   <td className="px-4 py-3 text-right font-mono text-indigo-600">{fmt(T.ewallet)}</td>
@@ -317,7 +314,7 @@ export default async function LedgerPage({
           <table className="w-full text-sm">
             <thead className="table-header">
               <tr>
-                {["Date","Branch","Pts","Prof Fee","Products","SST","Total","Cash","Cash (Next Day)","Card","FPX","eWallet","Atome"].map(h => (
+                {["Date","Branch","Pts","Prof Fee","Products","SST","Total","Cash","Card","FPX","eWallet","Atome"].map(h => (
                   <th key={h} className="px-3 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                 ))}
                 {panelProviders.map(p => (
@@ -327,7 +324,7 @@ export default async function LedgerPage({
             </thead>
             <tbody>
               {entries.length === 0 && (
-                <tr><td colSpan={13 + panelProviders.length} className="px-5 py-8 text-center text-slate-400">No records</td></tr>
+                <tr><td colSpan={12 + panelProviders.length} className="px-5 py-8 text-center text-slate-400">No records</td></tr>
               )}
               {entries.map(e => {
                 const pc = e.panelCollections as Record<string, number> ?? {};
@@ -342,8 +339,7 @@ export default async function LedgerPage({
                     <td className="px-3 py-2 font-mono">{fmtShort(Number(e.productSales))}</td>
                     <td className="px-3 py-2 font-mono text-slate-500">{fmtShort(Number(e.sst))}</td>
                     <td className="px-3 py-2 font-mono font-semibold">{fmtShort(Number(e.totalSales))}</td>
-                    <td className="px-3 py-2 font-mono text-green-700">{fmtShort(Number(e.cashCurrent))}</td>
-                    <td className="px-3 py-2 font-mono text-green-500">{fmtShort(Number(e.cashNext))}</td>
+                    <td className="px-3 py-2 font-mono text-green-700">{fmtShort(Number(e.cashCurrent) + Number(e.cashNext))}</td>
                     <td className="px-3 py-2 font-mono text-blue-700">{fmtShort(Number(e.creditCard))}</td>
                     <td className="px-3 py-2 font-mono text-indigo-700">{fmtShort(Number(e.fpx))}</td>
                     <td className="px-3 py-2 font-mono text-indigo-600">{fmtShort(Number(e.ewallet))}</td>
@@ -362,8 +358,7 @@ export default async function LedgerPage({
                   <td className="px-3 py-3 font-mono">{fmtShort(T.products)}</td>
                   <td className="px-3 py-3 font-mono">{fmtShort(T.sst)}</td>
                   <td className="px-3 py-3 font-mono text-blue-700">{fmtShort(T.total)}</td>
-                  <td className="px-3 py-3 font-mono text-green-700">{fmtShort(T.cashCurr)}</td>
-                  <td className="px-3 py-3 font-mono text-green-500">{fmtShort(T.cashNext)}</td>
+                  <td className="px-3 py-3 font-mono text-green-700">{fmtShort(T.cashCurr + T.cashNext)}</td>
                   <td className="px-3 py-3 font-mono text-blue-700">{fmtShort(T.card)}</td>
                   <td className="px-3 py-3 font-mono text-indigo-700">{fmtShort(T.fpx)}</td>
                   <td className="px-3 py-3 font-mono text-indigo-600">{fmtShort(T.ewallet)}</td>
