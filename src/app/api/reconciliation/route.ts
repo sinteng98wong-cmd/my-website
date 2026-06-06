@@ -56,6 +56,14 @@ export async function GET(req: NextRequest) {
   const monthStart  = new Date(year, mon - 1, 1);
   const monthEnd    = new Date(year, mon, 1);
 
+  // Fetch cash banking deposits for this month (auto-confirm Cash row)
+  const cashBankings = await prisma.cashBanking.findMany({
+    where: { clinicId, periodFrom: { gte: monthStart, lt: monthEnd } },
+    select: { bankInAmount: true, bankInDate: true, referenceNo: true },
+    orderBy: { bankInDate: "asc" },
+  });
+  const totalCashBanked = cashBankings.reduce((s, r) => s + Number(r.bankInAmount), 0);
+
   // Fetch all invoice payments for invoices in this month (via visit.visitDate)
   const invoicePayments = await prisma.invoicePayment.findMany({
     where: {
@@ -106,21 +114,40 @@ export async function GET(req: NextRequest) {
   }
 
   const methodSettlement = SETTLEMENT_METHODS.map(method => {
-    const data      = methodMap[method];
-    // current-month entry (sourceMonth IS NULL)
-    const confirmed = recon.methodEntries.find(e => e.method === method && e.sourceMonth === null) ?? null;
+    const data = methodMap[method];
+
+    // ── Cash: auto-confirmed from Cash Banking records ──────────────────────
+    if (method === "CASH_CURRENT") {
+      return {
+        method,
+        billed:           data.billed,
+        confirmed:        cashBankings.length > 0 ? {
+          amount:         totalCashBanked,
+          notes:          `${cashBankings.length} deposit(s)`,
+          by:             null,
+          at:             cashBankings[cashBankings.length - 1].bankInDate?.toISOString() ?? null,
+        } : null,
+        carryForward:     Math.max(0, data.billed - totalCashBanked),
+        fromCashBanking:  true,
+        cashBankingCount: cashBankings.length,
+      };
+    }
+
+    // ── Other methods: manual confirmation via MethodSettlementEntry ────────
+    const confirmed    = recon.methodEntries.find(e => e.method === method && e.sourceMonth === null) ?? null;
     const confirmedAmt = confirmed ? Number(confirmed.confirmedAmount) : null;
     return {
       method,
-      billed:        data.billed,
-      confirmed:     confirmed ? {
-        amount:      confirmedAmt!,
-        notes:       confirmed.notes,
-        by:          confirmed.confirmedBy?.name ?? null,
-        at:          confirmed.confirmedAt,
+      billed:           data.billed,
+      confirmed:        confirmed ? {
+        amount:         confirmedAmt!,
+        notes:          confirmed.notes,
+        by:             confirmed.confirmedBy?.name ?? null,
+        at:             confirmed.confirmedAt,
       } : null,
-      // carry-forward = billed - confirmed (what still needs to arrive next month)
-      carryForward:  Math.max(0, data.billed - (confirmedAmt ?? data.billed)),
+      carryForward:     Math.max(0, data.billed - (confirmedAmt ?? data.billed)),
+      fromCashBanking:  false,
+      cashBankingCount: 0,
     };
   }).filter(m => m.billed > 0);
 
@@ -337,7 +364,12 @@ export async function GET(req: NextRequest) {
   const totalBilled      = dailyRows.reduce((s, r) => s + r.billed, 0);
   const totalCashCard    = dailyRows.reduce((s, r) => s + r.cashCard, 0);
   const totalPanel       = dailyRows.reduce((s, r) => s + r.panel, 0);
-  const totalConfirmed   = methodSettlement.reduce((s, m) => s + (m.confirmed?.amount ?? m.billed), 0);
+  // Cash: use 0 if no deposits recorded (don't assume billed = confirmed)
+  const totalConfirmed   = methodSettlement.reduce((s, m) => {
+    if (m.confirmed !== null) return s + m.confirmed.amount;
+    if (m.fromCashBanking)   return s; // no bank deposits yet = 0
+    return s + m.billed;               // other methods: assume confirmed if not set
+  }, 0);
   const totalNextMonths  = methodSettlement.reduce((s, m) => s + m.carryForward, 0);
   const panelMatched     = Array.from(matchedMap.values()).reduce((s, v) => s + v, 0);
   const panelOutstanding = panelSummary.reduce((s, p) => s + p.unallocated, 0);

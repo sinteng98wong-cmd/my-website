@@ -8,10 +8,12 @@ type Clinic        = { id: string; name: string };
 type PanelProvider = { id: string; name: string; code: string };
 
 type MethodRow = {
-  method: string;
-  billed: number;
-  carryForward: number;
-  confirmed: { amount: number; notes: string | null; by: string | null; at: string } | null;
+  method:           string;
+  billed:           number;
+  carryForward:     number;
+  confirmed:        { amount: number; notes: string | null; by: string | null; at: string | null } | null;
+  fromCashBanking:  boolean;
+  cashBankingCount: number;
 };
 
 type CarryForwardRow = {
@@ -152,7 +154,7 @@ export function ReconClient({ clinics, panelProviders: initialProviders, initial
       setData(d);
       const drafts: Record<string, string> = {};
       for (const m of d.methodSettlement) {
-        // Use confirmed amount if saved; otherwise leave blank (empty string = user hasn't entered yet)
+        if (m.fromCashBanking) continue; // Cash is auto-populated from Cash Banking — no manual draft
         drafts[m.method] = m.confirmed != null ? String(m.confirmed.amount) : "";
       }
       for (const cf of d.carryForward) {
@@ -175,6 +177,9 @@ export function ReconClient({ clinics, panelProviders: initialProviders, initial
       // Skip blank entries — user hasn't entered anything for this method
       const parsed = parseFloat(val);
       if (val === "" || isNaN(parsed)) continue;
+      // Skip Cash — it's auto-confirmed from Cash Banking records
+      const methodKey = key.includes("::") ? key.split("::")[1] : key;
+      if (data.methodSettlement.find(m => m.method === methodKey)?.fromCashBanking) continue;
 
       const isCarryForward = key.includes("::");
       const [sourceMonth, method] = isCarryForward ? key.split("::") : [undefined, key];
@@ -365,6 +370,43 @@ export function ReconClient({ clinics, panelProviders: initialProviders, initial
                   <tr><td colSpan={5} className="px-5 py-6 text-sm text-slate-400 text-center">No non-panel payments in this month.</td></tr>
                 )}
                 {data.methodSettlement.map(row => {
+                  // ── Cash row: auto-populated from Cash Banking ──────────────
+                  if (row.fromCashBanking) {
+                    const cf = row.carryForward;
+                    return (
+                      <tr key={row.method} className="table-row">
+                        <td className="px-5 py-3 font-medium text-slate-800">{methodLabel(row.method)}</td>
+                        <td className="px-5 py-3 font-mono text-slate-700">{fmt(row.billed)}</td>
+                        <td className="px-5 py-3">
+                          {row.confirmed
+                            ? <span className="font-mono text-slate-700">{fmt(row.confirmed.amount)}</span>
+                            : <span className="text-xs text-slate-400">No deposits recorded</span>}
+                        </td>
+                        <td className={`px-5 py-3 font-mono font-semibold ${!cf || cf < 0.01 ? "text-slate-400" : "text-amber-700"}`}>
+                          {!cf || cf < 0.01 ? "—" : fmt(cf)}
+                        </td>
+                        <td className="px-5 py-3">
+                          <div className="flex items-center gap-2">
+                            {row.confirmed ? (
+                              <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-700 bg-green-50 border border-green-200 rounded-full px-2.5 py-0.5">
+                                ✓ {row.cashBankingCount} deposit{row.cashBankingCount !== 1 ? "s" : ""}
+                              </span>
+                            ) : (
+                              <span className="text-xs text-amber-600 font-medium">No deposits yet</span>
+                            )}
+                            <a
+                              href={`/ledger/cash-banking?clinicId=${data.recon.clinicId}&month=${data.recon.month}`}
+                              className="text-xs text-blue-600 hover:text-blue-800 underline"
+                            >
+                              → Cash Banking
+                            </a>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  }
+
+                  // ── Other methods: manual confirmation ──────────────────────
                   const rawDraft    = methodDraft[row.method] ?? "";
                   const draftVal    = rawDraft === "" ? null : (parseFloat(rawDraft) || 0);
                   const carryFwd    = draftVal !== null ? Math.max(0, row.billed - draftVal) : null;
