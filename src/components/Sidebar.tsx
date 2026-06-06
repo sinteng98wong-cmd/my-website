@@ -216,7 +216,7 @@ export function Sidebar({ clinics, selectedClinicId, allowedModules, effectiveRo
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-0.5 scrollbar-thin">
         {/* Insights — visible to SUPER_ADMIN, FINANCE, CLINIC_MANAGER, DOCTOR */}
-        {BI_ROLES.includes(role) && (
+        {BI_ROLES.includes(effectiveRole) && (
           <Link
             href="/bi"
             onClick={() => onClose?.()}
