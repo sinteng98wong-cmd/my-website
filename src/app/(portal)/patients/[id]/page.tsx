@@ -20,7 +20,7 @@ function InvoiceBar({ inv }: {
   inv: { id: string; invoiceRef: string; sst: any; total: any; collectedAt: Date | null; payments: InvPayment[] };
 }) {
   const METHOD_LABELS: Record<string, string> = {
-    CASH_CURRENT: "Cash", CASH_NEXT: "Cash (Next)", CREDIT_CARD: "Card",
+    CASH_CURRENT: "Cash", CASH_NEXT: "Cash (Next Day)", CREDIT_CARD: "Card",
     FPX: "FPX", EWALLET: "eWallet", ATOME: "Atome", PANEL: "Panel",
   };
   function fmt(n: number | string) {
@@ -58,7 +58,7 @@ const STATUS_CLASS: Record<string, string> = {
   DRAFT: "badge-slate", PENDING_LOCK: "badge-amber", LOCKED: "badge-green", REVERSED: "badge-red",
 };
 const METHOD_LABELS: Record<string, string> = {
-  CASH_CURRENT: "Cash", CASH_NEXT: "Cash (Next)", CREDIT_CARD: "Card",
+  CASH_CURRENT: "Cash", CASH_NEXT: "Cash (Next Day)", CREDIT_CARD: "Card",
   FPX: "FPX", EWALLET: "eWallet", ATOME: "Atome", PANEL: "Panel",
 };
 

@@ -226,7 +226,7 @@ export default async function LedgerPage({
       {entries.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
           {[
-            { label: "Cash",    value: cashTotal,    sub: `Curr: ${fmt(T.cashCurr)} · Next: ${fmt(T.cashNext)}`, color: "text-green-700"  },
+            { label: "Cash",    value: cashTotal,    sub: `Cash: ${fmt(T.cashCurr)} · Next Day: ${fmt(T.cashNext)}`, color: "text-green-700"  },
             { label: "Card",    value: cardTotal,    sub: "Credit card",                                           color: "text-blue-700"   },
             { label: "Digital", value: digitalTotal, sub: `FPX · eWallet · Atome`,                                color: "text-indigo-700" },
             { label: "Panel",   value: panelTotal,   sub: `${panelProviders.length} provider(s)`,                 color: "text-purple-700" },
@@ -253,8 +253,8 @@ export default async function LedgerPage({
               <tr>
                 <th className="px-4 py-2.5 text-left text-xs font-medium text-slate-500 uppercase tracking-wide border-r border-slate-200">Branch</th>
                 <th className="px-4 py-2.5 text-right text-xs font-medium text-slate-500 uppercase tracking-wide">Pts</th>
-                <th className="px-4 py-2.5 text-right text-xs font-medium text-green-600 uppercase tracking-wide">Cash (Curr)</th>
-                <th className="px-4 py-2.5 text-right text-xs font-medium text-green-500 uppercase tracking-wide">Cash (Next)</th>
+                <th className="px-4 py-2.5 text-right text-xs font-medium text-green-600 uppercase tracking-wide">Cash</th>
+                <th className="px-4 py-2.5 text-right text-xs font-medium text-green-500 uppercase tracking-wide">Cash (Next Day)</th>
                 <th className="px-4 py-2.5 text-right text-xs font-medium text-blue-600 uppercase tracking-wide">Card</th>
                 <th className="px-4 py-2.5 text-right text-xs font-medium text-indigo-600 uppercase tracking-wide">FPX</th>
                 <th className="px-4 py-2.5 text-right text-xs font-medium text-indigo-600 uppercase tracking-wide">eWallet</th>
@@ -317,7 +317,7 @@ export default async function LedgerPage({
           <table className="w-full text-sm">
             <thead className="table-header">
               <tr>
-                {["Date","Branch","Pts","Prof Fee","Products","SST","Total","Cash (Curr)","Cash (Next)","Card","FPX","eWallet","Atome"].map(h => (
+                {["Date","Branch","Pts","Prof Fee","Products","SST","Total","Cash","Cash (Next Day)","Card","FPX","eWallet","Atome"].map(h => (
                   <th key={h} className="px-3 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                 ))}
                 {panelProviders.map(p => (

@@ -8,7 +8,7 @@ function fmt(n: number | string) {
 }
 
 const METHOD_LABELS: Record<string, string> = {
-  CASH_CURRENT: "Cash", CASH_NEXT: "Cash (Next)", CREDIT_CARD: "Card",
+  CASH_CURRENT: "Cash", CASH_NEXT: "Cash (Next Day)", CREDIT_CARD: "Card",
   FPX: "FPX", EWALLET: "eWallet", ATOME: "Atome", PANEL: "Panel",
 };
 const METHOD_CLASS: Record<string, string> = {

@@ -73,7 +73,7 @@ function fmtDate(s: string) {
 }
 function methodLabel(m: string) {
   const map: Record<string, string> = {
-    CASH_CURRENT: "Cash (Same Day)", CASH_NEXT: "Cash (Next Day)",
+    CASH_CURRENT: "Cash",
     CREDIT_CARD: "Credit Card", FPX: "FPX", EWALLET: "E-Wallet", ATOME: "Atome",
   };
   return map[m] ?? m;

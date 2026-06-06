@@ -5,8 +5,9 @@ import { prisma } from "@/lib/prisma";
 
 const ALLOWED = ["SUPER_ADMIN", "FINANCE", "CLINIC_MANAGER"];
 
-// Non-panel methods we track in Track A
-const SETTLEMENT_METHODS = ["CASH_CURRENT", "CASH_NEXT", "CREDIT_CARD", "FPX", "EWALLET", "ATOME"] as const;
+// Non-panel methods we track in Track A.
+// CASH_NEXT is folded into CASH_CURRENT — cash is reconciled as a single monthly total.
+const SETTLEMENT_METHODS = ["CASH_CURRENT", "CREDIT_CARD", "FPX", "EWALLET", "ATOME"] as const;
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -90,7 +91,9 @@ export async function GET(req: NextRequest) {
 
   for (const ip of invoicePayments) {
     if (ip.method === "PANEL" || ip.method === "DEPOSIT") continue;
-    const m = methodMap[ip.method];
+    // CASH_NEXT is folded into CASH_CURRENT for monthly reconciliation
+    const key = ip.method === "CASH_NEXT" ? "CASH_CURRENT" : ip.method;
+    const m = methodMap[key];
     if (!m) continue;
     const amt = Number(ip.amount);
     m.billed += amt;
@@ -142,9 +145,11 @@ export async function GET(req: NextRequest) {
   // Group carry-forward by sourceMonth + method (raw settlement-date sum)
   const cfMap = new Map<string, { method: string; sourceMonth: string; rawExpected: number }>();
   for (const ip of carryForwardPayments) {
-    const srcMonth = ip.invoice.visit.visitDate.toISOString().slice(0, 7);
-    const key      = `${srcMonth}::${ip.method}`;
-    if (!cfMap.has(key)) cfMap.set(key, { method: ip.method, sourceMonth: srcMonth, rawExpected: 0 });
+    const srcMonth  = ip.invoice.visit.visitDate.toISOString().slice(0, 7);
+    // CASH_NEXT folded into CASH_CURRENT for monthly reconciliation
+    const method    = ip.method === "CASH_NEXT" ? "CASH_CURRENT" : ip.method;
+    const key       = `${srcMonth}::${method}`;
+    if (!cfMap.has(key)) cfMap.set(key, { method, sourceMonth: srcMonth, rawExpected: 0 });
     cfMap.get(key)!.rawExpected += Number(ip.amount);
   }
 
@@ -169,7 +174,11 @@ export async function GET(req: NextRequest) {
     });
     for (const pr of priorRecons) {
       const mmap = new Map<string, number>();
-      for (const e of pr.methodEntries) mmap.set(e.method, Number(e.confirmedAmount));
+      for (const e of pr.methodEntries) {
+        // Fold CASH_NEXT into CASH_CURRENT
+        const method = e.method === "CASH_NEXT" ? "CASH_CURRENT" : e.method;
+        mmap.set(method, (mmap.get(method) ?? 0) + Number(e.confirmedAmount));
+      }
       priorConfirmedMap.set(pr.month, mmap);
     }
 
@@ -195,8 +204,10 @@ export async function GET(req: NextRequest) {
       const srcMonth = ip.invoice.visit.visitDate.toISOString().slice(0, 7);
       if (!uniqueSourceMonths.includes(srcMonth)) continue;
       if (!priorBilledMap.has(srcMonth)) priorBilledMap.set(srcMonth, new Map());
-      const mmap = priorBilledMap.get(srcMonth)!;
-      mmap.set(ip.method, (mmap.get(ip.method) ?? 0) + Number(ip.amount));
+      const mmap   = priorBilledMap.get(srcMonth)!;
+      // Fold CASH_NEXT into CASH_CURRENT
+      const method = ip.method === "CASH_NEXT" ? "CASH_CURRENT" : ip.method;
+      mmap.set(method, (mmap.get(method) ?? 0) + Number(ip.amount));
     }
   }
 
