@@ -2380,16 +2380,17 @@ enum PlanPaymentMode {
 }
 
 model TreatmentStageTemplate {
-  id              String        @id @default(cuid())
+  id              String           @id @default(cuid())
   treatmentTypeId String
-  treatmentType   TreatmentType @relation(fields: [treatmentTypeId], references: [id])
+  treatmentType   TreatmentType    @relation(fields: [treatmentTypeId], references: [id])
   name            String
   description     String?
   order           Int
-  defaultCost     Decimal?      @db.Decimal(10,2)
+  defaultCost     Decimal?         @db.Decimal(10,2)
   estimatedDays   Int?
-  isActive        Boolean       @default(true)
-  createdAt       DateTime      @default(now())
+  isActive        Boolean          @default(true)
+  createdAt       DateTime         @default(now())
+  stages          TreatmentStage[]
 
   @@index([treatmentTypeId])
 }
@@ -2432,26 +2433,29 @@ model TreatmentPlan {
 }
 
 model TreatmentStage {
-  id            String        @id @default(cuid())
+  id            String                  @id @default(cuid())
   planId        String
-  plan          TreatmentPlan @relation(fields: [planId], references: [id])
+  plan          TreatmentPlan           @relation(fields: [planId], references: [id])
+  templateId    String?
+  template      TreatmentStageTemplate? @relation(fields: [templateId], references: [id])
   name          String
   description   String?
   order         Int
-  status        StageStatus   @default(PENDING)
-  cost          Decimal       @default(0) @db.Decimal(10,2)
+  status        StageStatus             @default(PENDING)
+  cost          Decimal                 @default(0) @db.Decimal(10,2)
   visitId       String?
-  visit         Visit?        @relation(fields: [visitId], references: [id])
+  visit         Visit?                  @relation(fields: [visitId], references: [id])
   performedById String?
-  performedBy   User?         @relation("StagePerformer", fields: [performedById], references: [id])
+  performedBy   User?                   @relation("StagePerformer", fields: [performedById], references: [id])
   completedAt   DateTime?
   clinicalNotes String?
   nextStageDate DateTime?
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @updatedAt
 
   @@index([planId])
   @@index([visitId])
+  @@index([templateId])
 }
 
 model TreatmentPlanPayment {
