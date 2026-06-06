@@ -13,6 +13,7 @@
 
 import Decimal from "decimal.js";
 import { PrismaClient, Prisma } from "@prisma/client";
+import { prisma as prismaDefault } from "@/lib/prisma";
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
@@ -305,7 +306,10 @@ export function calculateType4(
 // Master orchestration function
 // ─────────────────────────────────────────────────────────────────────────────
 
-const prismaDefault = new PrismaClient();
+function monthRange(monthStr: string): { from: Date; to: Date } {
+  const [y, m] = monthStr.split("-").map(Number);
+  return { from: new Date(y, m - 1, 1), to: new Date(y, m, 1) };
+}
 
 export async function calculateDoctorComprehensivePayroll(
   doctorId: string,
@@ -349,12 +353,12 @@ export async function calculateDoctorComprehensivePayroll(
   let treatments: TreatmentInput[] = [];
 
   if (needsClinical) {
-    const [y, m] = monthStr.split("-").map(Number);
+    const { from, to } = monthRange(monthStr);
     const raw = await prisma.treatment.findMany({
       where: {
         doctorId,
         visit: {
-          visitDate: { gte: new Date(y, m - 1, 1), lt: new Date(y, m, 1) },
+          visitDate: { gte: from, lt: to },
           deletedAt: null,
         },
       },

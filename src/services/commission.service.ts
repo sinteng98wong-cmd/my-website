@@ -18,7 +18,9 @@
  */
 
 import Decimal from "decimal.js";
-import { PrismaClient, Prisma } from "@prisma/client";
+import { PrismaClient } from "@prisma/client";
+import { prisma as prismaDefault } from "@/lib/prisma";
+import { resolveArchetype } from "./doctor-payroll.service";
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
@@ -619,10 +621,29 @@ export function serialisePayload(payload: DoctorPayrollPayload): object {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Orchestration — fetches from DB, calls buildPayload, upserts statement
+// Shared helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-const prismaDefault = new PrismaClient();
+function monthRange(monthStr: string): { from: Date; to: Date } {
+  const [y, m] = monthStr.split("-").map(Number);
+  return { from: new Date(y, m - 1, 1), to: new Date(y, m, 1) };
+}
+
+type LabFeeSource = {
+  labFee: { toString(): string };
+  labJob?: { invoiceAmount?: { toString(): string } | null; estimatedFee?: { toString(): string } | null } | null;
+};
+
+function resolveLabFee(t: LabFeeSource): Decimal {
+  if (Number(t.labFee) > 0) return new Decimal(t.labFee.toString());
+  if (t.labJob?.invoiceAmount) return new Decimal(t.labJob.invoiceAmount.toString());
+  if (t.labJob?.estimatedFee) return new Decimal(t.labJob.estimatedFee.toString());
+  return new Decimal(0);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Orchestration — fetches from DB, calls buildPayload, upserts statement
+// ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * Orchestration layer: reads doctor profile + treatments from DB,
@@ -641,9 +662,7 @@ export async function calculateDoctorPayrollPayload(
   prisma: PrismaClient = prismaDefault,
 ): Promise<PayrollResult> {
 
-  const [y, m] = monthStr.split("-").map(Number);
-  const from = new Date(y, m - 1, 1);
-  const to   = new Date(y, m,     1);
+  const { from, to } = monthRange(monthStr);
 
   // ── 1. Load doctor profile ────────────────────────────────────────────────
   const doctor = await prisma.doctorProfile.findUniqueOrThrow({
@@ -664,16 +683,9 @@ export async function calculateDoctorPayrollPayload(
   const hasSalary     = !!(staffProfile?.basicSalary && Number(staffProfile.basicSalary) > 0);
   const hasEngagement = !!engagement;
 
-  let payType: DoctorPayType;
-  if (doctor.type === "LOCUM") {
-    payType = "LOCUM_WITH_FLOOR";
-  } else if (hasSalary) {
-    // Permanent with salary — pure salaried unless engagement makes it hybrid.
-    // Hybrid (DUAL_SLIP) not in scope for this engine; treated as PURE_SALARIED.
-    payType = "PURE_SALARIED";
-  } else {
-    payType = "PURE_PROF_FEES";
-  }
+  const archetype = resolveArchetype(doctor.type as "LOCUM" | "PERMANENT", hasSalary, hasEngagement);
+  // DUAL_SLIP_HYBRID disbursement is handled by doctor-payroll.service; treat as PURE_SALARIED here.
+  const payType: DoctorPayType = archetype === "DUAL_SLIP_HYBRID" ? "PURE_SALARIED" : archetype;
 
   // Guaranteed floor: use engagement total when present; else sessions × dayRate
   const dayRate = new Decimal((doctor.dayRate ?? 0).toString());
@@ -694,23 +706,13 @@ export async function calculateDoctorPayrollPayload(
     orderBy: { visit: { visitDate: "asc" } },
   });
 
-  const treatments: PayrollTreatmentInput[] = raw.map(t => {
-    const effectiveLabFee = Number(t.labFee) > 0
-      ? new Decimal(t.labFee.toString())
-      : t.labJob?.invoiceAmount
-        ? new Decimal(t.labJob.invoiceAmount.toString())
-        : t.labJob?.estimatedFee
-          ? new Decimal(t.labJob.estimatedFee.toString())
-          : new Decimal(0);
-
-    return {
-      typeCode:     t.treatmentType.code,
-      billedAmount: new Decimal(t.billedAmount.toString()),
-      labFee:       effectiveLabFee,
-      sst:          new Decimal(t.sst.toString()),
-      splitRate:    new Decimal(t.doctorSplit.toString()),
-    };
-  });
+  const treatments: PayrollTreatmentInput[] = raw.map(t => ({
+    typeCode:     t.treatmentType.code,
+    billedAmount: new Decimal(t.billedAmount.toString()),
+    labFee:       resolveLabFee(t),
+    sst:          new Decimal(t.sst.toString()),
+    splitRate:    new Decimal(t.doctorSplit.toString()),
+  }));
 
   // ── 4. Run pure calculation engine ───────────────────────────────────────
   const result = calculatePayrollPayload({
@@ -808,9 +810,7 @@ export async function generateLocumStatement(
   prisma: PrismaClient = prismaDefault,
 ): Promise<{ statementId: string; finalPayout: Decimal }> {
 
-  const [y, m] = monthStr.split("-").map(Number);
-  const from = new Date(y, m - 1, 1);
-  const to   = new Date(y, m,     1);
+  const { from, to } = monthRange(monthStr);
 
   // ── 1. Load doctor profile to get split rate ──────────────────────────────
   const doctor = await prisma.doctorProfile.findUniqueOrThrow({
@@ -840,30 +840,20 @@ export async function generateLocumStatement(
     orderBy: { visit: { visitDate: "asc" } },
   });
 
-  const treatments: RawTreatmentInput[] = raw.map(t => {
-    const effectiveLabFee = Number(t.labFee) > 0
-      ? new Decimal(t.labFee.toString())
-      : t.labJob?.invoiceAmount
-        ? new Decimal(t.labJob.invoiceAmount.toString())
-        : t.labJob?.estimatedFee
-          ? new Decimal(t.labJob.estimatedFee.toString())
-          : new Decimal(0);
-
-    return {
-      id:              t.id,
-      visitDate:       t.visit.visitDate,
-      patientName:     t.visit.patient.name,
-      typeCode:        t.treatmentType.code,
-      billedAmount:    new Decimal(t.billedAmount.toString()),
-      collectedAmount: new Decimal(t.collectedAmount.toString()),
-      labFee:          effectiveLabFee,
-      sst:             new Decimal(t.sst.toString()),
-      doctorSplit:     new Decimal(t.doctorSplit.toString()),
-      toothCodes:      t.visit.toothRecords.map(r => r.toothCode).join(", "),
-      paidLocum:       new Decimal(0),
-      labJobStatus:    t.labJob?.status ?? undefined,
-    };
-  });
+  const treatments: RawTreatmentInput[] = raw.map(t => ({
+    id:              t.id,
+    visitDate:       t.visit.visitDate,
+    patientName:     t.visit.patient.name,
+    typeCode:        t.treatmentType.code,
+    billedAmount:    new Decimal(t.billedAmount.toString()),
+    collectedAmount: new Decimal(t.collectedAmount.toString()),
+    labFee:          resolveLabFee(t),
+    sst:             new Decimal(t.sst.toString()),
+    doctorSplit:     new Decimal(t.doctorSplit.toString()),
+    toothCodes:      t.visit.toothRecords.map(r => r.toothCode).join(", "),
+    paidLocum:       new Decimal(0),
+    labJobStatus:    t.labJob?.status ?? undefined,
+  }));
 
   // ── 3. Build the clinical-slip payload ────────────────────────────────────
   const payload = buildPayload(doctorId, monthStr, splitRate, treatments, extraDeductions);
