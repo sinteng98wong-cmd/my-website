@@ -103,6 +103,8 @@ export function ReconClient({ clinics, panelProviders: initialProviders, initial
   // Track A: editing (key = method for current month; "YYYY-MM::method" for carry-forward)
   const [methodDraft,    setMethodDraft]    = useState<Record<string, string>>({});
   const [savingMethods,  setSavingMethods]  = useState(false);
+  // Per-row unlock: confirmed rows are read-only unless explicitly unlocked
+  const [unlockedRows,   setUnlockedRows]   = useState<Set<string>>(new Set());
 
   // Track B: new remittance form
   const [showRemForm,    setShowRemForm]    = useState(false);
@@ -187,6 +189,7 @@ export function ReconClient({ clinics, panelProviders: initialProviders, initial
       });
     }
     setSavingMethods(false);
+    setUnlockedRows(new Set()); // re-lock all rows after save
     await load();
   }
 
@@ -362,11 +365,13 @@ export function ReconClient({ clinics, panelProviders: initialProviders, initial
                   <tr><td colSpan={5} className="px-5 py-6 text-sm text-slate-400 text-center">No non-panel payments in this month.</td></tr>
                 )}
                 {data.methodSettlement.map(row => {
-                  const rawDraft = methodDraft[row.method] ?? "";
-                  const draftVal = rawDraft === "" ? null : (parseFloat(rawDraft) || 0);
-                  const carryFwd = draftVal !== null ? Math.max(0, row.billed - draftVal) : null;
-                  const isSaved  = row.confirmed !== null;
-                  const isDirty  = isSaved
+                  const rawDraft    = methodDraft[row.method] ?? "";
+                  const draftVal    = rawDraft === "" ? null : (parseFloat(rawDraft) || 0);
+                  const carryFwd    = draftVal !== null ? Math.max(0, row.billed - draftVal) : null;
+                  const isSaved     = row.confirmed !== null;
+                  const isUnlocked  = unlockedRows.has(row.method);
+                  const isEditable  = !isLocked && (!isSaved || isUnlocked);
+                  const isDirty     = isSaved
                     ? draftVal !== null && Math.abs(draftVal - row.confirmed!.amount) > 0.005
                     : draftVal !== null;
                   return (
@@ -374,30 +379,55 @@ export function ReconClient({ clinics, panelProviders: initialProviders, initial
                       <td className="px-5 py-3 font-medium text-slate-800">{methodLabel(row.method)}</td>
                       <td className="px-5 py-3 font-mono text-slate-700">{fmt(row.billed)}</td>
                       <td className="px-5 py-3">
-                        {isLocked ? (
-                          <span className="font-mono text-slate-700">{fmt(row.confirmed?.amount ?? row.billed)}</span>
-                        ) : (
+                        {isEditable ? (
                           <input
                             className="form-input text-sm w-32 font-mono"
                             type="number" step="0.01" min="0"
                             value={methodDraft[row.method] ?? ""}
                             onChange={e => setMethodDraft(d => ({ ...d, [row.method]: e.target.value }))}
                           />
+                        ) : (
+                          <span className="font-mono text-slate-700">
+                            {isSaved ? fmt(row.confirmed!.amount) : "—"}
+                          </span>
                         )}
                       </td>
                       <td className={`px-5 py-3 font-mono font-semibold ${!carryFwd || carryFwd < 0.01 ? "text-slate-400" : "text-amber-700"}`}>
                         {!carryFwd || carryFwd < 0.01 ? "—" : fmt(carryFwd)}
                       </td>
                       <td className="px-5 py-3">
-                        {isSaved && !isDirty ? (
-                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-700 bg-green-50 border border-green-200 rounded-full px-2.5 py-0.5">
-                            ✓ Confirmed{row.confirmed?.by ? ` · ${row.confirmed.by}` : ""}
-                          </span>
-                        ) : isDirty ? (
-                          <span className="text-xs text-amber-600 font-medium">Unsaved</span>
-                        ) : (
-                          <span className="text-xs text-slate-400">Pending</span>
-                        )}
+                        <div className="flex items-center gap-2">
+                          {isSaved && !isDirty ? (
+                            <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-700 bg-green-50 border border-green-200 rounded-full px-2.5 py-0.5">
+                              ✓ Confirmed{row.confirmed?.by ? ` · ${row.confirmed.by}` : ""}
+                            </span>
+                          ) : isDirty ? (
+                            <span className="text-xs text-amber-600 font-medium">Unsaved</span>
+                          ) : (
+                            <span className="text-xs text-slate-400">Pending</span>
+                          )}
+                          {isSaved && !isLocked && !isUnlocked && (
+                            <button
+                              type="button"
+                              onClick={() => setUnlockedRows(s => new Set([...s, row.method]))}
+                              className="text-xs text-slate-400 hover:text-slate-600 underline"
+                            >
+                              Unlock
+                            </button>
+                          )}
+                          {isUnlocked && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setUnlockedRows(s => { const n = new Set(s); n.delete(row.method); return n; });
+                                setMethodDraft(d => ({ ...d, [row.method]: String(row.confirmed!.amount) }));
+                              }}
+                              className="text-xs text-slate-400 hover:text-slate-600 underline"
+                            >
+                              Cancel
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -432,11 +462,14 @@ export function ReconClient({ clinics, panelProviders: initialProviders, initial
                 <tbody>
                   {data.carryForward.map(row => {
                     const draftKey   = `${row.sourceMonth}::${row.method}`;
-                    const draftVal   = parseFloat(methodDraft[draftKey] || "0") || 0;
+                    const rawDraft   = methodDraft[draftKey] ?? "";
+                    const draftVal   = rawDraft === "" ? null : (parseFloat(rawDraft) || 0);
                     const isSaved    = row.confirmed !== null;
+                    const isUnlocked = unlockedRows.has(draftKey);
+                    const isEditable = !isLocked && (!isSaved || isUnlocked);
                     const isDirty    = isSaved
-                      ? Math.abs(draftVal - row.confirmed!.amount) > 0.005
-                      : draftVal > 0;
+                      ? draftVal !== null && Math.abs(draftVal - row.confirmed!.amount) > 0.005
+                      : draftVal !== null;
                     return (
                       <tr key={draftKey} className="table-row">
                         <td className="px-5 py-3 font-medium text-slate-700">
@@ -445,36 +478,59 @@ export function ReconClient({ clinics, panelProviders: initialProviders, initial
                         <td className="px-5 py-3 text-slate-600">{methodLabel(row.method)}</td>
                         <td className="px-5 py-3 font-mono text-blue-700">{fmt(row.expected)}</td>
                         <td className="px-5 py-3">
-                          {isLocked ? (
-                            <span className={`font-mono font-semibold ${isSaved ? "text-green-700" : "text-slate-500"}`}>
-                              {fmt(row.confirmed?.amount ?? row.expected)}
-                            </span>
-                          ) : (
+                          {isEditable ? (
                             <input
                               className="form-input text-sm w-32 font-mono"
                               type="number" step="0.01" min="0"
                               value={methodDraft[draftKey] ?? ""}
                               onChange={e => setMethodDraft(d => ({ ...d, [draftKey]: e.target.value }))}
                             />
+                          ) : (
+                            <span className={`font-mono font-semibold ${isSaved ? "text-green-700" : "text-slate-400"}`}>
+                              {isSaved ? fmt(row.confirmed!.amount) : "—"}
+                            </span>
                           )}
                         </td>
                         <td className="px-5 py-3">
-                          {isSaved && !isDirty ? (
-                            <div>
-                              <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-700 bg-green-50 border border-green-200 rounded-full px-2.5 py-0.5">
-                                ✓ Confirmed
-                              </span>
-                              {row.confirmed?.by && (
-                                <p className="text-[10px] text-slate-400 mt-0.5">
-                                  by {row.confirmed.by}{row.confirmed.at ? ` · ${new Date(row.confirmed.at).toLocaleDateString("en-MY", { dateStyle: "medium" })}` : ""}
-                                </p>
-                              )}
-                            </div>
-                          ) : isDirty ? (
-                            <span className="text-xs text-amber-600 font-medium">Unsaved</span>
-                          ) : (
-                            <span className="text-xs text-slate-400">Pending</span>
-                          )}
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {isSaved && !isDirty ? (
+                              <div>
+                                <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-700 bg-green-50 border border-green-200 rounded-full px-2.5 py-0.5">
+                                  ✓ Confirmed
+                                </span>
+                                {row.confirmed?.by && (
+                                  <p className="text-[10px] text-slate-400 mt-0.5">
+                                    by {row.confirmed.by}{row.confirmed.at ? ` · ${new Date(row.confirmed.at).toLocaleDateString("en-MY", { dateStyle: "medium" })}` : ""}
+                                  </p>
+                                )}
+                              </div>
+                            ) : isDirty ? (
+                              <span className="text-xs text-amber-600 font-medium">Unsaved</span>
+                            ) : (
+                              <span className="text-xs text-slate-400">Pending</span>
+                            )}
+                            {isSaved && !isLocked && !isUnlocked && (
+                              <button
+                                type="button"
+                                onClick={() => setUnlockedRows(s => new Set([...s, draftKey]))}
+                                className="text-xs text-slate-400 hover:text-slate-600 underline"
+                              >
+                                Unlock
+                              </button>
+                            )}
+                            {isUnlocked && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setUnlockedRows(s => { const n = new Set(s); n.delete(draftKey); return n; });
+                                  setMethodDraft(d => ({ ...d, [draftKey]: String(row.confirmed!.amount) }));
+                                }}
+                                className="text-xs text-slate-400 hover:text-slate-600 underline"
+                              >
+                                Cancel
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     );
