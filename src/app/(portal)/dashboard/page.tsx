@@ -59,12 +59,14 @@ export default async function DashboardPage() {
 
   return (
     <div>
-      <div className="mb-6">
-        <h1 className="page-title">Dashboard</h1>
-        <p className="text-sm text-slate-500 mt-0.5">Welcome back, {session?.user?.name}</p>
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">Dashboard</h1>
+          <p className="text-sm text-slate-500 mt-0.5">Welcome back, {session?.user?.name}</p>
+        </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
         {stats.map((s) => (
           <div key={s.label} className="stat-card">
             <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">{s.label}</p>
@@ -106,8 +108,8 @@ export default async function DashboardPage() {
         </div>
       )}
 
-      <div className="card">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+      <div className="card overflow-x-auto">
+        <div className="flex items-center justify-between px-4 sm:px-5 py-4 border-b border-slate-200">
           <h2 className="text-sm font-semibold text-slate-900">Recent Patients</h2>
           <Link href="/patients" className="text-xs text-blue-600 hover:underline">View all</Link>
         </div>

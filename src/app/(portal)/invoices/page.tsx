@@ -41,7 +41,7 @@ export default async function InvoicesPage({
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="page-header">
         <div>
           <h1 className="page-title">Invoices</h1>
           <p className="text-sm text-slate-500 mt-0.5">{invoices.length} invoices on {dateStr}</p>
@@ -52,7 +52,7 @@ export default async function InvoicesPage({
         </form>
       </div>
 
-      <div className="card overflow-hidden">
+      <div className="card overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="table-header">
             <tr>

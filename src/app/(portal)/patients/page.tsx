@@ -42,7 +42,7 @@ export default async function PatientsPage({
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="page-header">
         <div>
           <h1 className="page-title">Patients</h1>
           <p className="text-sm text-slate-500 mt-0.5">{patients.length} records</p>
@@ -59,17 +59,17 @@ export default async function PatientsPage({
         </Link>
       </div>
 
-      <form className="mb-4 flex gap-2">
+      <form className="mb-4 flex flex-col sm:flex-row gap-2">
         {tab === "pending" && <input type="hidden" name="tab" value="pending" />}
-        <input name="q" defaultValue={q} placeholder="Search name, IC, passport or ref…" className="form-input max-w-sm" />
-        <select name="source" defaultValue={source ?? ""} className="form-input w-44">
+        <input name="q" defaultValue={q} placeholder="Search name, IC, passport or ref…" className="form-input sm:max-w-sm" />
+        <select name="source" defaultValue={source ?? ""} className="form-input sm:w-44">
           <option value="">All sources</option>
           {sources.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
         <button className="btn-outline">Filter</button>
       </form>
 
-      <div className="card overflow-hidden">
+      <div className="card overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="table-header">
             <tr>
