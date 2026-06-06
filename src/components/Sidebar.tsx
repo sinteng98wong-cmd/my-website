@@ -37,8 +37,6 @@ type NavGroup = {
 
 type NavEntry = NavItem | NavGroup;
 
-const BI_ROLES = ["SUPER_ADMIN", "FINANCE", "CLINIC_MANAGER", "DOCTOR"];
-
 const NAV: NavEntry[] = [
   // ── Dashboard ──────────────────────────────────────────────────────
   { type: "item", key: "dashboard", label: "Dashboard", href: "/dashboard" },
@@ -215,21 +213,19 @@ export function Sidebar({ clinics, selectedClinicId, allowedModules, effectiveRo
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-0.5 scrollbar-thin">
-        {/* Insights — visible to SUPER_ADMIN, FINANCE, CLINIC_MANAGER, DOCTOR */}
-        {BI_ROLES.includes(effectiveRole) && (
-          <Link
-            href="/bi"
-            onClick={() => onClose?.()}
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-              isActive("/bi")
-                ? "bg-white/10 text-white"
-                : "text-slate-400 hover:text-white hover:bg-white/5"
-            }`}
-          >
-            <TrendingUp size={14} />
-            Insights
-          </Link>
-        )}
+        {/* Insights */}
+        <Link
+          href="/bi"
+          onClick={() => onClose?.()}
+          className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+            isActive("/bi")
+              ? "bg-white/10 text-white"
+              : "text-slate-400 hover:text-white hover:bg-white/5"
+          }`}
+        >
+          <TrendingUp size={14} />
+          Insights
+        </Link>
         {NAV.map((entry) => {
           if (!entryVisible(entry)) return null;
 
