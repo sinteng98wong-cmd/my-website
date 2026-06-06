@@ -36,7 +36,10 @@ export default async function CashBankingPage({
       include: { clinic: { select: { name: true } } },
       orderBy: { bankInDate: "desc" },
     }),
-    prisma.clinic.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } }),
+    prisma.clinic.findMany({
+      select: { id: true, name: true, bankName: true, bankAccountNo: true, bankAccountName: true },
+      orderBy: { name: "asc" },
+    }),
   ]);
 
   const ledgerDays = ledgerEntries.map(e => ({
@@ -47,18 +50,19 @@ export default async function CashBankingPage({
   }));
 
   const bankRecordsSafe = bankRecords.map(r => ({
-    id:           r.id,
-    clinicId:     r.clinicId,
-    clinicName:   r.clinic.name,
-    periodFrom:   r.periodFrom.toISOString().slice(0, 10),
-    periodTo:     r.periodTo.toISOString().slice(0, 10),
-    expectedCash: Number(r.expectedCash),
-    bankInAmount: Number(r.bankInAmount),
-    variance:     Number(r.variance),
-    bankInDate:   r.bankInDate.toISOString().slice(0, 10),
-    referenceNo:  r.referenceNo ?? undefined,
-    bankName:     r.bankName    ?? undefined,
-    notes:        r.notes       ?? undefined,
+    id:              r.id,
+    clinicId:        r.clinicId,
+    clinicName:      r.clinic.name,
+    clinicBankName:  r.clinic.bankName ?? undefined,
+    periodFrom:      r.periodFrom.toISOString().slice(0, 10),
+    periodTo:        r.periodTo.toISOString().slice(0, 10),
+    expectedCash:    Number(r.expectedCash),
+    bankInAmount:    Number(r.bankInAmount),
+    variance:        Number(r.variance),
+    bankInDate:      r.bankInDate.toISOString().slice(0, 10),
+    depositType:     r.depositType,
+    referenceNo:     r.referenceNo ?? undefined,
+    notes:           r.notes       ?? undefined,
   }));
 
   return (

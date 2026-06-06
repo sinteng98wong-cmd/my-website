@@ -1310,8 +1310,9 @@ model CashBanking {
   bankInAmount  Decimal   @db.Decimal(10,2)
   variance      Decimal   @default(0) @db.Decimal(10,2)
   bankInDate    DateTime
+  // ONLINE_TRANSFER | CASH_DEPOSIT_MACHINE
+  depositType   String    @default("ONLINE_TRANSFER")
   referenceNo   String?
-  bankName      String?
   notes         String?
   recordedById  String?
   createdAt     DateTime  @default(now())

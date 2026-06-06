@@ -3,13 +3,21 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
-type Clinic = { id: string; name: string };
+type Clinic = {
+  id: string; name: string;
+  bankName?: string; bankAccountNo?: string; bankAccountName?: string;
+};
 type LedgerDay = { date: string; clinicId: string; clinicName: string; cashCurrent: number };
 type BankRecord = {
-  id: string; clinicId: string; clinicName: string;
+  id: string; clinicId: string; clinicName: string; clinicBankName?: string;
   periodFrom: string; periodTo: string;
   expectedCash: number; bankInAmount: number; variance: number;
-  bankInDate: string; referenceNo?: string; bankName?: string; notes?: string;
+  bankInDate: string; depositType: string; referenceNo?: string; notes?: string;
+};
+
+const DEPOSIT_TYPE_LABEL: Record<string, string> = {
+  ONLINE_TRANSFER:      "Online Transfer",
+  CASH_DEPOSIT_MACHINE: "Cash Deposit Machine",
 };
 
 function fmt(n: number) {
@@ -44,12 +52,12 @@ export function CashBankingClient({
   const today = new Date().toISOString().slice(0, 10);
   const [form, setForm] = useState({
     clinicId,
-    periodFrom: "",
-    periodTo:   "",
-    bankInDate: today,
-    referenceNo: "",
-    bankName:   "",
-    notes:      "",
+    periodFrom:   "",
+    periodTo:     "",
+    bankInDate:   today,
+    depositType:  "ONLINE_TRANSFER",
+    referenceNo:  "",
+    notes:        "",
     bankInAmount: "",
   });
 
@@ -80,8 +88,8 @@ export function CashBankingClient({
           expectedCash,
           bankInAmount: parseFloat(form.bankInAmount) || 0,
           bankInDate:   form.bankInDate,
+          depositType:  form.depositType,
           referenceNo:  form.referenceNo || undefined,
-          bankName:     form.bankName    || undefined,
           notes:        form.notes       || undefined,
         }),
       });
@@ -92,18 +100,21 @@ export function CashBankingClient({
       }
       const created = await res.json();
       const cName = clinics.find(c => c.id === created.clinicId)?.name ?? "";
+      const clinic = clinics.find(c => c.id === created.clinicId);
       setRecords(prev => [{
         ...created,
-        clinicName:  cName,
-        periodFrom:  created.periodFrom.slice(0, 10),
-        periodTo:    created.periodTo.slice(0, 10),
-        bankInDate:  created.bankInDate.slice(0, 10),
-        expectedCash: Number(created.expectedCash),
-        bankInAmount: Number(created.bankInAmount),
-        variance:     Number(created.variance),
+        clinicName:     cName,
+        clinicBankName: clinic?.bankName ?? undefined,
+        periodFrom:     created.periodFrom.slice(0, 10),
+        periodTo:       created.periodTo.slice(0, 10),
+        bankInDate:     created.bankInDate.slice(0, 10),
+        depositType:    created.depositType ?? "ONLINE_TRANSFER",
+        expectedCash:   Number(created.expectedCash),
+        bankInAmount:   Number(created.bankInAmount),
+        variance:       Number(created.variance),
       }, ...prev]);
       setShowForm(false);
-      setForm({ clinicId, periodFrom: "", periodTo: "", bankInDate: today, referenceNo: "", bankName: "", notes: "", bankInAmount: "" });
+      setForm({ clinicId, periodFrom: "", periodTo: "", bankInDate: today, depositType: "ONLINE_TRANSFER", referenceNo: "", notes: "", bankInAmount: "" });
     } finally {
       setSaving(false);
     }
@@ -250,22 +261,43 @@ export function CashBankingClient({
               </div>
 
               <div>
-                <label className="form-label">Bank Deposit Slip / Reference No.</label>
+                <label className="form-label">Deposit Type</label>
+                <select
+                  className="form-input"
+                  value={form.depositType}
+                  onChange={e => setForm(f => ({ ...f, depositType: e.target.value }))}
+                  required
+                >
+                  <option value="ONLINE_TRANSFER">Online Transfer</option>
+                  <option value="CASH_DEPOSIT_MACHINE">Cash Deposit Machine</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="form-label">Reference No.</label>
                 <input
-                  type="text" className="form-input" placeholder="e.g. DEP-2026-001"
+                  type="text" className="form-input"
+                  placeholder={form.depositType === "ONLINE_TRANSFER" ? "e.g. IBG transaction ID" : "e.g. CDM receipt no."}
                   value={form.referenceNo}
                   onChange={e => setForm(f => ({ ...f, referenceNo: e.target.value }))}
                 />
               </div>
 
-              <div>
-                <label className="form-label">Bank Name</label>
-                <input
-                  type="text" className="form-input" placeholder="e.g. Maybank, CIMB"
-                  value={form.bankName}
-                  onChange={e => setForm(f => ({ ...f, bankName: e.target.value }))}
-                />
-              </div>
+              {/* Show clinic bank info (read-only) */}
+              {form.clinicId && (() => {
+                const c = clinics.find(cl => cl.id === form.clinicId);
+                if (!c?.bankName) return null;
+                return (
+                  <div className="col-span-2">
+                    <p className="text-xs text-slate-500 mb-1">Bank Account (from clinic record)</p>
+                    <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-md text-sm text-slate-700">
+                      <span className="font-medium">{c.bankName}</span>
+                      {c.bankAccountNo && <span className="ml-2 font-mono text-slate-500">{c.bankAccountNo}</span>}
+                      {c.bankAccountName && <span className="ml-2 text-slate-500">— {c.bankAccountName}</span>}
+                    </div>
+                  </div>
+                );
+              })()}
 
               <div className="col-span-2">
                 <label className="form-label">Notes</label>
@@ -335,7 +367,7 @@ export function CashBankingClient({
           <table className="w-full text-sm">
             <thead className="table-header">
               <tr>
-                {["Period Covered","Branch","Expected","Banked In","Variance","Bank-In Date","Ref No.","Bank","Notes",""].map(h => (
+                {["Period Covered","Branch","Type","Expected","Banked In","Variance","Bank-In Date","Ref No.","Bank","Notes",""].map(h => (
                   <th key={h} className="px-4 py-2.5 text-left text-xs font-medium text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                 ))}
               </tr>
@@ -352,6 +384,15 @@ export function CashBankingClient({
                       : `${fmtDate(r.periodFrom)} – ${fmtDate(r.periodTo)}`}
                   </td>
                   <td className="px-4 py-2.5 text-slate-600">{r.clinicName}</td>
+                  <td className="px-4 py-2.5 text-slate-600 whitespace-nowrap">
+                    <span className={`inline-flex items-center text-xs font-medium px-2 py-0.5 rounded-full ${
+                      r.depositType === "CASH_DEPOSIT_MACHINE"
+                        ? "bg-purple-50 text-purple-700"
+                        : "bg-blue-50 text-blue-700"
+                    }`}>
+                      {DEPOSIT_TYPE_LABEL[r.depositType] ?? r.depositType}
+                    </span>
+                  </td>
                   <td className="px-4 py-2.5 font-mono text-slate-700">{fmt(r.expectedCash)}</td>
                   <td className="px-4 py-2.5 font-mono font-semibold text-green-700">{fmt(r.bankInAmount)}</td>
                   <td className={`px-4 py-2.5 font-mono font-medium ${
@@ -362,7 +403,7 @@ export function CashBankingClient({
                   </td>
                   <td className="px-4 py-2.5 whitespace-nowrap text-slate-700">{fmtDate(r.bankInDate)}</td>
                   <td className="px-4 py-2.5 font-mono text-xs text-slate-600">{r.referenceNo ?? "—"}</td>
-                  <td className="px-4 py-2.5 text-slate-600">{r.bankName ?? "—"}</td>
+                  <td className="px-4 py-2.5 text-slate-600">{r.clinicBankName ?? "—"}</td>
                   <td className="px-4 py-2.5 text-slate-500 text-xs max-w-xs truncate">{r.notes ?? ""}</td>
                   <td className="px-4 py-2.5">
                     <button
