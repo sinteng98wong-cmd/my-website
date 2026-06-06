@@ -33,7 +33,7 @@ export default async function CashBankingPage({
         periodFrom: { gte: from, lte: to },
         ...(clinicId ? { clinicId } : {}),
       },
-      include: { clinic: { select: { name: true } } },
+      include: { clinic: { select: { name: true, bankName: true } } },
       orderBy: { bankInDate: "desc" },
     }),
     prisma.clinic.findMany({
@@ -96,7 +96,12 @@ export default async function CashBankingPage({
       </div>
 
       <CashBankingClient
-        clinics={clinics}
+        clinics={clinics.map(c => ({
+          ...c,
+          bankName:        c.bankName        ?? undefined,
+          bankAccountNo:   c.bankAccountNo   ?? undefined,
+          bankAccountName: c.bankAccountName ?? undefined,
+        }))}
         ledgerDays={ledgerDays}
         bankRecords={bankRecordsSafe}
         month={month}
