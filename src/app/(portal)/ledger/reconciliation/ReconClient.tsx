@@ -150,10 +150,11 @@ export function ReconClient({ clinics, panelProviders: initialProviders, initial
       setData(d);
       const drafts: Record<string, string> = {};
       for (const m of d.methodSettlement) {
-        drafts[m.method] = String(m.confirmed?.amount ?? m.inMonth);
+        // Use confirmed amount if saved; otherwise leave blank (empty string = user hasn't entered yet)
+        drafts[m.method] = m.confirmed != null ? String(m.confirmed.amount) : "";
       }
       for (const cf of d.carryForward) {
-        drafts[`${cf.sourceMonth}::${cf.method}`] = String(cf.confirmed?.amount ?? cf.expected);
+        drafts[`${cf.sourceMonth}::${cf.method}`] = cf.confirmed != null ? String(cf.confirmed.amount) : "";
       }
       setMethodDraft(drafts);
     } else {
@@ -169,6 +170,10 @@ export function ReconClient({ clinics, panelProviders: initialProviders, initial
     if (!data) return;
     setSavingMethods(true);
     for (const [key, val] of Object.entries(methodDraft)) {
+      // Skip blank entries — user hasn't entered anything for this method
+      const parsed = parseFloat(val);
+      if (val === "" || isNaN(parsed)) continue;
+
       const isCarryForward = key.includes("::");
       const [sourceMonth, method] = isCarryForward ? key.split("::") : [undefined, key];
       await fetch(`/api/reconciliation/${data.recon.id}/method-settlement`, {
@@ -176,7 +181,7 @@ export function ReconClient({ clinics, panelProviders: initialProviders, initial
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           method,
-          confirmedAmount: parseFloat(val) || 0,
+          confirmedAmount: parsed,
           ...(sourceMonth ? { sourceMonth } : {}),
         }),
       });
@@ -357,12 +362,13 @@ export function ReconClient({ clinics, panelProviders: initialProviders, initial
                   <tr><td colSpan={5} className="px-5 py-6 text-sm text-slate-400 text-center">No non-panel payments in this month.</td></tr>
                 )}
                 {data.methodSettlement.map(row => {
-                  const draftVal     = parseFloat(methodDraft[row.method] || "0") || 0;
-                  const carryFwd     = Math.max(0, row.billed - draftVal);
-                  const isSaved      = row.confirmed !== null;
-                  const isDirty      = isSaved
-                    ? Math.abs(draftVal - row.confirmed!.amount) > 0.005
-                    : draftVal > 0;
+                  const rawDraft = methodDraft[row.method] ?? "";
+                  const draftVal = rawDraft === "" ? null : (parseFloat(rawDraft) || 0);
+                  const carryFwd = draftVal !== null ? Math.max(0, row.billed - draftVal) : null;
+                  const isSaved  = row.confirmed !== null;
+                  const isDirty  = isSaved
+                    ? draftVal !== null && Math.abs(draftVal - row.confirmed!.amount) > 0.005
+                    : draftVal !== null;
                   return (
                     <tr key={row.method} className="table-row">
                       <td className="px-5 py-3 font-medium text-slate-800">{methodLabel(row.method)}</td>
@@ -379,8 +385,8 @@ export function ReconClient({ clinics, panelProviders: initialProviders, initial
                           />
                         )}
                       </td>
-                      <td className={`px-5 py-3 font-mono font-semibold ${carryFwd < 0.01 ? "text-slate-400" : "text-amber-700"}`}>
-                        {carryFwd < 0.01 ? "—" : fmt(carryFwd)}
+                      <td className={`px-5 py-3 font-mono font-semibold ${!carryFwd || carryFwd < 0.01 ? "text-slate-400" : "text-amber-700"}`}>
+                        {!carryFwd || carryFwd < 0.01 ? "—" : fmt(carryFwd)}
                       </td>
                       <td className="px-5 py-3">
                         {isSaved && !isDirty ? (

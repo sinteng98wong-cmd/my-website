@@ -33,13 +33,21 @@ export async function POST(
     return NextResponse.json({ error: "Validation failed", issues: parsed.error.flatten() }, { status: 422 });
 
   const { method, confirmedAmount, notes, sourceMonth = null } = parsed.data;
-
   const sm = sourceMonth ?? null;
-  const entry = await prisma.methodSettlementEntry.upsert({
-    where:  { reconId_method_sourceMonth: { reconId: params.id, method: method as any, sourceMonth: sm as string } },
-    update: { confirmedAmount, notes: notes ?? null, confirmedById: userId, confirmedAt: new Date() },
-    create: { reconId: params.id, method: method as any, sourceMonth: sm, confirmedAmount, notes: notes ?? null, confirmedById: userId },
+
+  // Prisma upsert with null in a unique key is unreliable — use findFirst + update/create
+  const existing = await prisma.methodSettlementEntry.findFirst({
+    where: { reconId: params.id, method: method as any, sourceMonth: sm },
   });
+
+  const entry = existing
+    ? await prisma.methodSettlementEntry.update({
+        where:  { id: existing.id },
+        data:   { confirmedAmount, notes: notes ?? null, confirmedById: userId, confirmedAt: new Date() },
+      })
+    : await prisma.methodSettlementEntry.create({
+        data: { reconId: params.id, method: method as any, sourceMonth: sm, confirmedAmount, notes: notes ?? null, confirmedById: userId },
+      });
 
   return NextResponse.json(entry);
 }
