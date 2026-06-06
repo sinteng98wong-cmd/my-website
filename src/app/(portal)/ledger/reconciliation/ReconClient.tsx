@@ -9,15 +9,14 @@ type PanelProvider = { id: string; name: string; code: string };
 
 type MethodRow = {
   method: string;
-  billed: number; inMonth: number; nextMonths: number;
-  confirmed: { amount: number; notes: string | null; by: string | null } | null;
-  variance: number | null;
+  billed: number;
+  carryForward: number;
+  confirmed: { amount: number; notes: string | null; by: string | null; at: string } | null;
 };
 
 type CarryForwardRow = {
   method: string; sourceMonth: string; expected: number;
-  confirmed: { amount: number; notes: string | null; by: string | null } | null;
-  variance: number | null;
+  confirmed: { amount: number; notes: string | null; by: string | null; at: string } | null;
 };
 
 type RemittanceItem = {
@@ -348,25 +347,29 @@ export function ReconClient({ clinics, panelProviders: initialProviders, initial
             <table className="w-full text-sm">
               <thead className="table-header">
                 <tr>
-                  {["Method", "Billed This Month", "Expected Settled in Month", "You Confirm Received", "Variance", "Expected Next Month(s)"].map(h => (
+                  {["Method", "Billed This Month", "You Confirm Received", "Carry Forward to Next Month", "Status"].map(h => (
                     <th key={h} className="px-5 py-2.5 text-left text-xs font-medium text-slate-500 uppercase tracking-wide">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {data.methodSettlement.length === 0 && (
-                  <tr><td colSpan={6} className="px-5 py-6 text-sm text-slate-400 text-center">No non-panel payments in this month.</td></tr>
+                  <tr><td colSpan={5} className="px-5 py-6 text-sm text-slate-400 text-center">No non-panel payments in this month.</td></tr>
                 )}
                 {data.methodSettlement.map(row => {
-                  const variance = (parseFloat(methodDraft[row.method] || "0") || 0) - row.inMonth;
+                  const draftVal     = parseFloat(methodDraft[row.method] || "0") || 0;
+                  const carryFwd     = Math.max(0, row.billed - draftVal);
+                  const isSaved      = row.confirmed !== null;
+                  const isDirty      = isSaved
+                    ? Math.abs(draftVal - row.confirmed!.amount) > 0.005
+                    : draftVal > 0;
                   return (
                     <tr key={row.method} className="table-row">
                       <td className="px-5 py-3 font-medium text-slate-800">{methodLabel(row.method)}</td>
-                      <td className="px-5 py-3 font-mono text-slate-600">{fmt(row.billed)}</td>
-                      <td className="px-5 py-3 font-mono text-slate-600">{fmt(row.inMonth)}</td>
+                      <td className="px-5 py-3 font-mono text-slate-700">{fmt(row.billed)}</td>
                       <td className="px-5 py-3">
                         {isLocked ? (
-                          <span className="font-mono text-slate-700">{fmt(row.confirmed?.amount ?? row.inMonth)}</span>
+                          <span className="font-mono text-slate-700">{fmt(row.confirmed?.amount ?? row.billed)}</span>
                         ) : (
                           <input
                             className="form-input text-sm w-32 font-mono"
@@ -376,11 +379,19 @@ export function ReconClient({ clinics, panelProviders: initialProviders, initial
                           />
                         )}
                       </td>
-                      <td className={`px-5 py-3 font-mono font-semibold ${Math.abs(variance) < 0.01 ? "text-green-600" : variance > 0 ? "text-blue-600" : "text-red-600"}`}>
-                        {variance === 0 ? "—" : (variance > 0 ? "+" : "") + fmt(variance)}
+                      <td className={`px-5 py-3 font-mono font-semibold ${carryFwd < 0.01 ? "text-slate-400" : "text-amber-700"}`}>
+                        {carryFwd < 0.01 ? "—" : fmt(carryFwd)}
                       </td>
-                      <td className="px-5 py-3 font-mono text-blue-600">
-                        {row.nextMonths > 0 ? fmt(row.nextMonths) : "—"}
+                      <td className="px-5 py-3">
+                        {isSaved && !isDirty ? (
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-700 bg-green-50 border border-green-200 rounded-full px-2.5 py-0.5">
+                            ✓ Confirmed{row.confirmed?.by ? ` · ${row.confirmed.by}` : ""}
+                          </span>
+                        ) : isDirty ? (
+                          <span className="text-xs text-amber-600 font-medium">Unsaved</span>
+                        ) : (
+                          <span className="text-xs text-slate-400">Pending</span>
+                        )}
                       </td>
                     </tr>
                   );
@@ -407,16 +418,19 @@ export function ReconClient({ clinics, panelProviders: initialProviders, initial
               <table className="w-full text-sm">
                 <thead className="table-header">
                   <tr>
-                    {["From Month", "Method", "Expected to Arrive", "You Confirm Received", "Variance"].map(h => (
+                    {["From Month", "Method", "Expected to Arrive", "You Confirm Received", "Status"].map(h => (
                       <th key={h} className="px-5 py-2.5 text-left text-xs font-medium text-slate-500 uppercase tracking-wide">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {data.carryForward.map(row => {
-                    const draftKey = `${row.sourceMonth}::${row.method}`;
-                    const confirmed = parseFloat(methodDraft[draftKey] || "0") || 0;
-                    const variance  = confirmed - row.expected;
+                    const draftKey   = `${row.sourceMonth}::${row.method}`;
+                    const draftVal   = parseFloat(methodDraft[draftKey] || "0") || 0;
+                    const isSaved    = row.confirmed !== null;
+                    const isDirty    = isSaved
+                      ? Math.abs(draftVal - row.confirmed!.amount) > 0.005
+                      : draftVal > 0;
                     return (
                       <tr key={draftKey} className="table-row">
                         <td className="px-5 py-3 font-medium text-slate-700">
@@ -426,7 +440,9 @@ export function ReconClient({ clinics, panelProviders: initialProviders, initial
                         <td className="px-5 py-3 font-mono text-blue-700">{fmt(row.expected)}</td>
                         <td className="px-5 py-3">
                           {isLocked ? (
-                            <span className="font-mono text-slate-700">{fmt(row.confirmed?.amount ?? row.expected)}</span>
+                            <span className={`font-mono font-semibold ${isSaved ? "text-green-700" : "text-slate-500"}`}>
+                              {fmt(row.confirmed?.amount ?? row.expected)}
+                            </span>
                           ) : (
                             <input
                               className="form-input text-sm w-32 font-mono"
@@ -436,8 +452,23 @@ export function ReconClient({ clinics, panelProviders: initialProviders, initial
                             />
                           )}
                         </td>
-                        <td className={`px-5 py-3 font-mono font-semibold ${Math.abs(variance) < 0.01 ? "text-green-600" : variance > 0 ? "text-blue-600" : "text-red-600"}`}>
-                          {Math.abs(variance) < 0.01 ? "—" : (variance > 0 ? "+" : "") + fmt(variance)}
+                        <td className="px-5 py-3">
+                          {isSaved && !isDirty ? (
+                            <div>
+                              <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-700 bg-green-50 border border-green-200 rounded-full px-2.5 py-0.5">
+                                ✓ Confirmed
+                              </span>
+                              {row.confirmed?.by && (
+                                <p className="text-[10px] text-slate-400 mt-0.5">
+                                  by {row.confirmed.by}{row.confirmed.at ? ` · ${new Date(row.confirmed.at).toLocaleDateString("en-MY", { dateStyle: "medium" })}` : ""}
+                                </p>
+                              )}
+                            </div>
+                          ) : isDirty ? (
+                            <span className="text-xs text-amber-600 font-medium">Unsaved</span>
+                          ) : (
+                            <span className="text-xs text-slate-400">Pending</span>
+                          )}
                         </td>
                       </tr>
                     );
