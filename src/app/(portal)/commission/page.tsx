@@ -1,9 +1,12 @@
+import React from "react";
 import Link from "next/link";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { DoctorCommissionTable } from "./DoctorCommissionTable";
 import { StaffCommissionTable }  from "./StaffCommissionTable";
+import { Stethoscope, Users, Calculator, Banknote, FileCheck, type LucideIcon } from "lucide-react";
+const CalcIcon = Calculator;
 
 const RM = (n: number) =>
   new Intl.NumberFormat("ms-MY", { style: "currency", currency: "MYR" }).format(Number(n));
@@ -41,9 +44,9 @@ function buildDoctorGroups(rows: any[]) {
 }
 
 const TABS = [
-  { key: "doctor", label: "Doctor Commission", icon: "🩺" },
-  { key: "staff",  label: "Staff Commission",  icon: "👥" },
-  { key: "calc",   label: "Payroll Calculator", icon: "🧮" },
+  { key: "doctor", label: "Doctor Commission", Icon: Stethoscope },
+  { key: "staff",  label: "Staff Commission",  Icon: Users },
+  { key: "calc",   label: "Payroll Calculator", Icon: Calculator },
 ] as const;
 
 export default async function CommissionPage({
@@ -139,13 +142,16 @@ export default async function CommissionPage({
 
       {/* ── Summary stat cards ──────────────────────────────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label="Doctor Commission" value={RM(totalDoctor)} sub={`${draftDr} draft · ${lockedDr} locked`} color="blue"   />
-        <StatCard label="Monthly Statements" value={`${(stmtRows as any[]).length}`} sub={`Approved: ${(stmtRows as any[]).filter((s:any) => s.status === "LOCKED").length} locked`} color="amber" />
-        <StatCard label="Staff Commission"  value={RM(totalStaff)}  sub={`${staffComms.length} records`}                          color="purple" />
+        <StatCard label="Doctor Commission" value={RM(totalDoctor)} sub={`${draftDr} draft · ${lockedDr} locked`} color="blue"   Icon={Banknote} />
+        <StatCard label="Monthly Statements" value={`${(stmtRows as any[]).length}`} sub={`${(stmtRows as any[]).filter((s:any) => s.status === "LOCKED").length} locked`} color="amber" Icon={FileCheck} />
+        <StatCard label="Staff Commission"  value={RM(totalStaff)}  sub={`${staffComms.length} records`} color="purple" Icon={Users} />
         <div className="card p-5 flex flex-col justify-between">
-          <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Payroll Calculator</p>
+          <div className="flex items-center gap-2">
+            <div className="icon-box-sm bg-slate-100 text-slate-500"><CalcIcon size={16} /></div>
+            <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Payroll Calc</p>
+          </div>
           <Link href={`/commission/payroll-calc?month=${month}`} className="mt-3 btn-primary text-xs justify-center">
-            Open Calculator →
+            Open Calculator
           </Link>
         </div>
       </div>
@@ -163,7 +169,7 @@ export default async function CommissionPage({
                   : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300"
               }`}
             >
-              <span>{t.icon}</span>
+              <t.Icon size={14} />
               {t.label}
             </a>
           ))}
@@ -206,7 +212,7 @@ export default async function CommissionPage({
 
       {tab === "calc" && (
         <div className="card p-10 flex flex-col items-center gap-4 text-center">
-          <div className="w-14 h-14 bg-blue-50 rounded-2xl flex items-center justify-center text-3xl">🧮</div>
+          <div className="icon-box w-14 h-14 rounded-2xl bg-blue-50 text-blue-600"><Calculator size={28} /></div>
           <div>
             <p className="font-semibold text-slate-800">Payroll Calculator</p>
             <p className="text-sm text-slate-500 mt-1 max-w-sm">
@@ -214,7 +220,7 @@ export default async function CommissionPage({
             </p>
           </div>
           <Link href={`/commission/payroll-calc?month=${month}`} className="btn-primary">
-            Open Payroll Calculator →
+            Open Payroll Calculator
           </Link>
         </div>
       )}
@@ -225,21 +231,25 @@ export default async function CommissionPage({
 
 // ── Stat card helper ──────────────────────────────────────────────────────────
 
-function StatCard({ label, value, sub, color }: {
+function StatCard({ label, value, sub, color, Icon }: {
   label: string; value: string; sub: string;
   color: "blue" | "amber" | "purple";
+  Icon: LucideIcon;
 }) {
-  const accent = {
-    blue:   "border-l-blue-500 bg-blue-50/30",
-    amber:  "border-l-amber-500 bg-amber-50/30",
-    purple: "border-l-purple-500 bg-purple-50/30",
+  const iconClass = {
+    blue:   "icon-box-blue",
+    amber:  "icon-box-amber",
+    purple: "icon-box-purple",
   }[color];
 
   return (
-    <div className={`card p-5 border-l-4 ${accent}`}>
-      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{label}</p>
-      <p className="text-2xl font-bold text-slate-900 mt-2 tabular-nums">{value}</p>
-      <p className="text-xs text-slate-400 mt-1">{sub}</p>
+    <div className="stat-card flex items-start gap-3">
+      <div className={iconClass}><Icon size={20} /></div>
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{label}</p>
+        <p className="text-xl font-bold text-slate-900 mt-1 tabular-nums">{value}</p>
+        <p className="text-xs text-slate-400 mt-0.5">{sub}</p>
+      </div>
     </div>
   );
 }

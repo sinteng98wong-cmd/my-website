@@ -9,52 +9,78 @@
 @layer components {
 
   /* ── Typography ───────────────────────────────────────────────────── */
-  .page-title { @apply text-2xl font-semibold tracking-tight text-slate-900; }
+  .page-title { @apply text-xl sm:text-2xl font-bold tracking-tight text-slate-900; }
+  .section-title { @apply text-sm font-semibold text-slate-700; }
+
+  /* ── Page header — title left, action right, wraps on mobile ──────── */
+  .page-header { @apply flex flex-wrap items-start justify-between gap-3 mb-6; }
 
   /* ── Containers ───────────────────────────────────────────────────── */
-  .card     { @apply bg-white rounded-xl shadow-sm ring-1 ring-slate-200/70; }
-  .stat-card { @apply card p-6; }
+  .card      { @apply bg-white rounded-2xl shadow-sm ring-1 ring-slate-200/80; }
+  .stat-card { @apply card p-5; }
+
+  /* ── Scrollable table wrapper ─────────────────────────────────────── */
+  .table-wrap { @apply overflow-x-auto -mx-4 sm:mx-0; }
 
   /* ── Tables ───────────────────────────────────────────────────────── */
-  .table-header { @apply bg-slate-50/80 border-b border-slate-200; }
-  .table-row    { @apply border-b border-slate-100 hover:bg-slate-50/60 transition-colors; }
+  .table-header { @apply bg-slate-50 border-b border-slate-200; }
+  .table-row    { @apply border-b border-slate-100 hover:bg-slate-50/80 transition-colors; }
 
   /* ── Badges ───────────────────────────────────────────────────────── */
-  .badge        { @apply inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium; }
-  .badge-blue   { @apply badge bg-blue-50 text-blue-700; }
-  .badge-green  { @apply badge bg-emerald-50 text-emerald-700; }
-  .badge-amber  { @apply badge bg-amber-50 text-amber-700; }
-  .badge-red    { @apply badge bg-red-50 text-red-600; }
+  .badge        { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold; }
+  .badge-blue   { @apply badge bg-blue-100 text-blue-700; }
+  .badge-green  { @apply badge bg-emerald-100 text-emerald-700; }
+  .badge-amber  { @apply badge bg-amber-100 text-amber-700; }
+  .badge-red    { @apply badge bg-red-100 text-red-700; }
   .badge-slate  { @apply badge bg-slate-100 text-slate-600; }
-  .badge-cyan   { @apply badge bg-cyan-50 text-cyan-700; }
-  .badge-indigo { @apply badge bg-indigo-50 text-indigo-700; }
-  .badge-teal   { @apply badge bg-teal-50 text-teal-700; }
-  .badge-purple { @apply badge bg-violet-50 text-violet-700; }
-  .badge-emerald { @apply badge bg-emerald-50 text-emerald-700; }
+  .badge-cyan   { @apply badge bg-cyan-100 text-cyan-700; }
+  .badge-indigo { @apply badge bg-indigo-100 text-indigo-700; }
+  .badge-teal   { @apply badge bg-teal-100 text-teal-700; }
+  .badge-purple { @apply badge bg-violet-100 text-violet-700; }
+  .badge-emerald { @apply badge bg-emerald-100 text-emerald-700; }
+  .badge-rose   { @apply badge bg-rose-100 text-rose-700; }
+
+  /* ── Icon boxes ───────────────────────────────────────────────────── */
+  .icon-box         { @apply w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0; }
+  .icon-box-sm      { @apply w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0; }
+  .icon-box-blue    { @apply icon-box bg-blue-100 text-blue-600; }
+  .icon-box-green   { @apply icon-box bg-emerald-100 text-emerald-600; }
+  .icon-box-amber   { @apply icon-box bg-amber-100 text-amber-600; }
+  .icon-box-purple  { @apply icon-box bg-violet-100 text-violet-600; }
+  .icon-box-indigo  { @apply icon-box bg-indigo-100 text-indigo-600; }
+  .icon-box-red     { @apply icon-box bg-red-100 text-red-600; }
+  .icon-box-cyan    { @apply icon-box bg-cyan-100 text-cyan-600; }
+  .icon-box-rose    { @apply icon-box bg-rose-100 text-rose-600; }
+  .icon-box-teal    { @apply icon-box bg-teal-100 text-teal-600; }
+  .icon-box-slate   { @apply icon-box bg-slate-100 text-slate-500; }
+  .icon-box-sky     { @apply icon-box bg-sky-100 text-sky-600; }
 
   /* ── Buttons ──────────────────────────────────────────────────────── */
   .btn-primary {
-    @apply inline-flex items-center gap-1.5 px-3.5 py-2
-           bg-blue-600 text-white text-sm font-medium rounded-lg
+    @apply inline-flex items-center gap-1.5 px-4 py-2
+           bg-blue-600 text-white text-sm font-semibold rounded-xl
            hover:bg-blue-700 active:bg-blue-800
            transition-colors focus:outline-none focus:ring-2
            focus:ring-blue-500 focus:ring-offset-2
-           disabled:opacity-40 disabled:cursor-not-allowed;
+           disabled:opacity-40 disabled:cursor-not-allowed
+           shadow-sm;
   }
   .btn-secondary {
-    @apply inline-flex items-center gap-1.5 px-3.5 py-2
-           bg-white border border-slate-200 text-slate-700 text-sm font-medium rounded-lg
+    @apply inline-flex items-center gap-1.5 px-4 py-2
+           bg-white border border-slate-200 text-slate-700 text-sm font-medium rounded-xl
            hover:bg-slate-50 active:bg-slate-100
            transition-colors focus:outline-none focus:ring-2
            focus:ring-slate-300 focus:ring-offset-2
-           disabled:opacity-40 disabled:cursor-not-allowed;
+           disabled:opacity-40 disabled:cursor-not-allowed
+           shadow-sm;
   }
   .btn-outline {
-    @apply inline-flex items-center gap-1.5 px-3.5 py-2
-           bg-white border border-slate-200 text-slate-700 text-sm font-medium rounded-lg
+    @apply inline-flex items-center gap-1.5 px-4 py-2
+           bg-white border border-slate-200 text-slate-700 text-sm font-medium rounded-xl
            hover:bg-slate-50 active:bg-slate-100
            transition-colors focus:outline-none focus:ring-2
-           focus:ring-slate-300 focus:ring-offset-2;
+           focus:ring-slate-300 focus:ring-offset-2
+           shadow-sm;
   }
   .btn-ghost {
     @apply inline-flex items-center gap-1.5 px-3 py-1.5
@@ -64,7 +90,7 @@
 
   /* ── Forms ────────────────────────────────────────────────────────── */
   .input {
-    @apply w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white
+    @apply w-full px-3 py-2 text-sm border border-slate-200 rounded-xl bg-white
            placeholder:text-slate-400
            focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400
            transition-colors;
@@ -73,13 +99,21 @@
     @apply block text-sm font-medium text-slate-700 mb-1.5;
   }
   .form-input {
-    @apply w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white
+    @apply w-full px-3 py-2 text-sm border border-slate-200 rounded-xl bg-white
            placeholder:text-slate-400
            focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400
            transition-colors;
   }
   .form-label {
     @apply block text-sm font-medium text-slate-700 mb-1.5;
+  }
+
+  /* ── Empty state ──────────────────────────────────────────────────── */
+  .empty-state {
+    @apply flex flex-col items-center justify-center py-16 px-6 text-center gap-3;
+  }
+  .empty-state-icon {
+    @apply w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 mb-1;
   }
 
 }
