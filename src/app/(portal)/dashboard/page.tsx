@@ -8,24 +8,44 @@ import { TodayStaffingWidget } from "@/components/TodayStaffingWidget";
 import {
   Users, CalendarCheck, Banknote, UserPlus, FileText,
   ClipboardList, AlertCircle, AlertTriangle, ArrowRight,
-  Stethoscope, type LucideIcon,
+  Stethoscope, type LucideIcon, Clock,
 } from "lucide-react";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("ms-MY", { style: "currency", currency: "MYR" }).format(n);
 }
 
+const APPT_TYPE_CLASS: Record<string, string> = {
+  TREATMENT:    "badge-blue",
+  CHECKUP:      "badge-green",
+  CONSULTATION: "badge-indigo",
+  FOLLOWUP:     "badge-cyan",
+  CLEANING:     "badge-teal",
+  EXTRACTION:   "badge-amber",
+  OTHER:        "badge-slate",
+};
+
+const APPT_STATUS_CLASS: Record<string, string> = {
+  CONFIRMED:   "badge-green",
+  CHECKED_IN:  "badge-blue",
+  SCHEDULED:   "badge-slate",
+};
+
 export default async function DashboardPage() {
   const session = await getServerSession(authOptions);
-  const role = (session?.user as any)?.role;
+  const role    = (session?.user as any)?.role   as string;
+  const userId  = (session?.user as any)?.id     as string;
   const clinicId = getSelectedClinicId();
 
-  const clinicFilter = clinicId ? { homeClinicId: clinicId } : {};
+  const clinicFilter      = clinicId ? { homeClinicId: clinicId } : {};
   const visitClinicFilter = clinicId ? { clinicId } : {};
 
   const today = new Date(); today.setHours(0, 0, 0, 0);
+  const sevenDaysOut = new Date(today); sevenDaysOut.setDate(sevenDaysOut.getDate() + 8);
 
-  const [patientCount, todayVisits, recentPatients, pendingComm, licenseAlerts] = await Promise.all([
+  const showAppointments = !["FINANCE", "STOREKEEPER"].includes(role);
+
+  const [patientCount, todayVisits, recentPatients, pendingComm, licenseAlerts, upcomingAppointments] = await Promise.all([
     prisma.patient.count({ where: notDeleted(clinicFilter) }),
     prisma.visit.count({ where: notDeleted({ visitDate: { gte: today }, ...visitClinicFilter }) }),
     prisma.patient.findMany({
@@ -43,6 +63,24 @@ export default async function DashboardPage() {
           by: ["status"],
           where: { status: { in: ["EXPIRED","EXPIRING_SOON"] } },
           _count: true,
+        })
+      : Promise.resolve([]),
+
+    showAppointments
+      ? prisma.appointment.findMany({
+          where: {
+            startTime: { gte: today, lt: sevenDaysOut },
+            status:    { in: ["SCHEDULED", "CONFIRMED", "CHECKED_IN"] },
+            ...(clinicId ? { clinicId } : {}),
+            ...(role === "DOCTOR" ? { doctorId: userId } : {}),
+          },
+          include: {
+            patient: { select: { name: true, patientRef: true } },
+            doctor:  { select: { name: true } },
+            clinic:  { select: { name: true } },
+          },
+          orderBy: { startTime: "asc" },
+          take: 10,
         })
       : Promise.resolve([]),
   ]);
@@ -81,6 +119,23 @@ export default async function DashboardPage() {
     ],
   };
   const links = quickLinks[role] ?? [];
+
+  // Group appointments by calendar date (MYT)
+  const apptByDate = new Map<string, typeof upcomingAppointments>();
+  for (const a of upcomingAppointments) {
+    const key = new Date(a.startTime).toLocaleDateString("en-CA", { timeZone: "Asia/Kuala_Lumpur" });
+    if (!apptByDate.has(key)) apptByDate.set(key, []);
+    apptByDate.get(key)!.push(a);
+  }
+
+  const todayKey = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kuala_Lumpur" });
+  const tomorrowKey = new Date(Date.now() + 86400000).toLocaleDateString("en-CA", { timeZone: "Asia/Kuala_Lumpur" });
+
+  function dateLabel(key: string) {
+    if (key === todayKey)    return "Today";
+    if (key === tomorrowKey) return "Tomorrow";
+    return new Date(key + "T12:00:00+08:00").toLocaleDateString("en-MY", { weekday: "short", month: "short", day: "numeric" });
+  }
 
   return (
     <div>
@@ -139,6 +194,83 @@ export default async function DashboardPage() {
               </Link>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Upcoming Appointments */}
+      {showAppointments && upcomingAppointments.length > 0 && (
+        <div className="card mb-6 overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+            <div className="flex items-center gap-2">
+              <CalendarCheck size={15} className="text-blue-500" />
+              <h2 className="text-sm font-semibold text-slate-900">Upcoming Appointments</h2>
+              <span className="badge-blue text-[10px] px-1.5 py-0">{upcomingAppointments.length}</span>
+            </div>
+            <Link href="/appointments" className="text-xs text-blue-600 hover:underline flex items-center gap-1">
+              View all <ArrowRight size={12} />
+            </Link>
+          </div>
+
+          {Array.from(apptByDate.entries()).map(([dateKey, appts]) => (
+            <div key={dateKey}>
+              {/* Date header */}
+              <div className="px-5 py-2 bg-slate-50 border-b border-slate-100 flex items-center gap-2">
+                <span className={`text-xs font-semibold ${dateKey === todayKey ? "text-blue-700" : "text-slate-600"}`}>
+                  {dateLabel(dateKey)}
+                </span>
+                <span className="text-[10px] text-slate-400">{dateKey}</span>
+                <span className="badge-slate text-[10px] px-1 py-0 ml-auto">{appts.length} appt{appts.length !== 1 ? "s" : ""}</span>
+              </div>
+
+              {/* Appointment rows */}
+              {appts.map(appt => {
+                const timeStr = new Date(appt.startTime).toLocaleTimeString("en-MY", {
+                  timeZone: "Asia/Kuala_Lumpur",
+                  hour: "2-digit", minute: "2-digit", hour12: true,
+                });
+                const typeLabel = appt.type.charAt(0) + appt.type.slice(1).toLowerCase();
+                const doctorName = appt.doctor.name.replace(/^Dr\.?\s*/i, "Dr. ");
+
+                return (
+                  <div key={appt.id} className="flex items-center gap-4 px-5 py-3 border-b border-slate-100 last:border-0 hover:bg-slate-50/60 transition-colors">
+                    {/* Time */}
+                    <div className="w-20 flex-shrink-0 flex items-center gap-1.5 text-slate-500">
+                      <Clock size={12} className="flex-shrink-0" />
+                      <span className="text-xs font-semibold tabular-nums">{timeStr}</span>
+                    </div>
+
+                    {/* Patient + complaint */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-medium text-slate-900 truncate">{appt.patient.name}</span>
+                        <span className={`${APPT_TYPE_CLASS[appt.type] ?? "badge-slate"} text-[10px]`}>{typeLabel}</span>
+                        {(APPT_STATUS_CLASS[appt.status]) && appt.status !== "SCHEDULED" && (
+                          <span className={`${APPT_STATUS_CLASS[appt.status]} text-[10px]`}>{appt.status.toLowerCase()}</span>
+                        )}
+                      </div>
+                      {appt.chiefComplaint && (
+                        <p className="text-xs text-slate-400 truncate mt-0.5">{appt.chiefComplaint}</p>
+                      )}
+                    </div>
+
+                    {/* Doctor + duration */}
+                    <div className="text-right flex-shrink-0 hidden sm:block">
+                      <p className="text-xs font-medium text-slate-600">{doctorName}</p>
+                      <p className="text-[10px] text-slate-400">{appt.duration} min</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Empty upcoming appointments */}
+      {showAppointments && upcomingAppointments.length === 0 && (
+        <div className="card mb-6 p-6 flex items-center gap-3 text-slate-400">
+          <CalendarCheck size={18} />
+          <p className="text-sm">No upcoming appointments in the next 7 days</p>
         </div>
       )}
 

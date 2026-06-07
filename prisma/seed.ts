@@ -1155,6 +1155,182 @@ async function main() {
     });
   }
 
+  // ── Upcoming Appointments & Treatment Plans ───────────────────────────
+
+  function nextDate(daysFromNow: number, hourMYT: number, minMYT = 0): Date {
+    const base = new Date();
+    base.setDate(base.getDate() + daysFromNow);
+    const dateStr = base.toLocaleDateString("en-CA", { timeZone: "Asia/Kuala_Lumpur" });
+    return new Date(`${dateStr}T${String(hourMYT).padStart(2, "0")}:${String(minMYT).padStart(2, "0")}:00+08:00`);
+  }
+
+  const acceptedAt14 = new Date(); acceptedAt14.setDate(acceptedAt14.getDate() - 14);
+  const acceptedAt10 = new Date(); acceptedAt10.setDate(acceptedAt10.getDate() - 10);
+  const acceptedAt120 = new Date(); acceptedAt120.setDate(acceptedAt120.getDate() - 120);
+  const acceptedAt2 = new Date(); acceptedAt2.setDate(acceptedAt2.getDate() - 2);
+  const completedAt14 = new Date(); completedAt14.setDate(completedAt14.getDate() - 14);
+  const completedAt10 = new Date(); completedAt10.setDate(completedAt10.getDate() - 10);
+  const completedAt120 = new Date(); completedAt120.setDate(completedAt120.getDate() - 120);
+  const completedAt90 = new Date(); completedAt90.setDate(completedAt90.getDate() - 90);
+
+  // Treatment Plans
+  const plan1 = await prisma.treatmentPlan.upsert({
+    where: { planRef: "TP-2026-001" },
+    update: {},
+    create: {
+      planRef: "TP-2026-001",
+      patientId: "pat-1",
+      clinicId: clinicA.id,
+      dentistId: doctorHafiz.id,
+      title: "Root Canal Treatment — Tooth 16",
+      status: "IN_PROGRESS",
+      toothCodes: ["16"],
+      subtotal: 1200,
+      totalAmount: 1200,
+      depositRequired: 300,
+      totalPaid: 300,
+      acceptedAt: acceptedAt14,
+    },
+  });
+
+  const plan2 = await prisma.treatmentPlan.upsert({
+    where: { planRef: "TP-2026-002" },
+    update: {},
+    create: {
+      planRef: "TP-2026-002",
+      patientId: "pat-2",
+      clinicId: clinicA.id,
+      dentistId: doctorHafiz.id,
+      title: "Porcelain Crown — Tooth 26",
+      status: "IN_PROGRESS",
+      toothCodes: ["26"],
+      subtotal: 1800,
+      totalAmount: 1800,
+      depositRequired: 500,
+      totalPaid: 1800,
+      acceptedAt: acceptedAt10,
+    },
+  });
+
+  const plan3 = await prisma.treatmentPlan.upsert({
+    where: { planRef: "TP-2026-003" },
+    update: {},
+    create: {
+      planRef: "TP-2026-003",
+      patientId: "pat-4",
+      clinicId: clinicA.id,
+      dentistId: doctorPriya.id,
+      title: "Single Implant — Tooth 46",
+      status: "IN_PROGRESS",
+      toothCodes: ["46"],
+      subtotal: 4500,
+      totalAmount: 4500,
+      depositRequired: 1000,
+      totalPaid: 3000,
+      paymentMode: "PAY_PER_STAGE",
+      acceptedAt: acceptedAt120,
+    },
+  });
+
+  const plan4 = await prisma.treatmentPlan.upsert({
+    where: { planRef: "TP-2026-004" },
+    update: {},
+    create: {
+      planRef: "TP-2026-004",
+      patientId: "pat-5",
+      clinicId: clinicA.id,
+      dentistId: doctorHafiz.id,
+      title: "Orthodontic Braces Treatment",
+      status: "ACCEPTED",
+      toothCodes: [],
+      subtotal: 5500,
+      totalAmount: 5500,
+      depositRequired: 1000,
+      totalPaid: 1000,
+      acceptedAt: acceptedAt2,
+    },
+  });
+
+  // Treatment Stages
+  const stagesData = [
+    // Plan 1 — RCT
+    { id: "ts-1-1", planId: plan1.id, templateId: "tst-rct-1", name: "Access Opening & Pulp Removal",  order: 1, status: "COMPLETED" as const, cost: 150, completedAt: completedAt14 },
+    { id: "ts-1-2", planId: plan1.id, templateId: "tst-rct-2", name: "Cleaning & Shaping (BMP)",        order: 2, status: "IN_PROGRESS" as const, cost: 200, completedAt: null },
+    { id: "ts-1-3", planId: plan1.id, templateId: "tst-rct-3", name: "Obturation (Canal Filling)",      order: 3, status: "PENDING" as const, cost: 200, completedAt: null },
+    { id: "ts-1-4", planId: plan1.id, templateId: "tst-rct-4", name: "Post & Core Build-Up",            order: 4, status: "PENDING" as const, cost: 250, completedAt: null },
+    { id: "ts-1-5", planId: plan1.id, templateId: "tst-rct-5", name: "Crown Cementation",               order: 5, status: "PENDING" as const, cost: 600, completedAt: null },
+    // Plan 2 — Crown
+    { id: "ts-2-1", planId: plan2.id, templateId: "tst-crn-1", name: "Tooth Preparation & Impression",  order: 1, status: "COMPLETED" as const, cost: 300, completedAt: completedAt10 },
+    { id: "ts-2-2", planId: plan2.id, templateId: "tst-crn-2", name: "Crown Try-In",                    order: 2, status: "IN_PROGRESS" as const, cost: 0,   completedAt: null },
+    { id: "ts-2-3", planId: plan2.id, templateId: "tst-crn-3", name: "Crown Cementation",               order: 3, status: "PENDING" as const, cost: 600, completedAt: null },
+    // Plan 3 — Implant
+    { id: "ts-3-1", planId: plan3.id, templateId: "tst-imp-1", name: "Consultation & Assessment",        order: 1, status: "COMPLETED" as const, cost: 100,  completedAt: completedAt120 },
+    { id: "ts-3-2", planId: plan3.id, templateId: "tst-imp-2", name: "Implant Placement (Surgery)",      order: 2, status: "COMPLETED" as const, cost: 2500, completedAt: completedAt90 },
+    { id: "ts-3-3", planId: plan3.id, templateId: "tst-imp-3", name: "Osseointegration Review",          order: 3, status: "IN_PROGRESS" as const, cost: 100,  completedAt: null },
+    { id: "ts-3-4", planId: plan3.id, templateId: "tst-imp-4", name: "Abutment Placement",               order: 4, status: "PENDING" as const, cost: 500,  completedAt: null },
+    { id: "ts-3-5", planId: plan3.id, templateId: "tst-imp-5", name: "Crown Delivery",                   order: 5, status: "PENDING" as const, cost: 1200, completedAt: null },
+    // Plan 4 — Braces
+    { id: "ts-4-1", planId: plan4.id, templateId: "tst-brc-1", name: "Records & Study Models",           order: 1, status: "PENDING" as const, cost: 200,  completedAt: null },
+    { id: "ts-4-2", planId: plan4.id, templateId: "tst-brc-2", name: "Banding / Bonding",                order: 2, status: "PENDING" as const, cost: 1500, completedAt: null },
+    { id: "ts-4-3", planId: plan4.id, templateId: "tst-brc-3", name: "Monthly Adjustment #1",            order: 3, status: "PENDING" as const, cost: 80,   completedAt: null },
+    { id: "ts-4-4", planId: plan4.id, templateId: "tst-brc-4", name: "Monthly Adjustment #2",            order: 4, status: "PENDING" as const, cost: 80,   completedAt: null },
+    { id: "ts-4-5", planId: plan4.id, templateId: "tst-brc-5", name: "Monthly Adjustment #3",            order: 5, status: "PENDING" as const, cost: 80,   completedAt: null },
+    { id: "ts-4-6", planId: plan4.id, templateId: "tst-brc-6", name: "Monthly Adjustment #4",            order: 6, status: "PENDING" as const, cost: 80,   completedAt: null },
+    { id: "ts-4-7", planId: plan4.id, templateId: "tst-brc-7", name: "Monthly Adjustment #5",            order: 7, status: "PENDING" as const, cost: 80,   completedAt: null },
+    { id: "ts-4-8", planId: plan4.id, templateId: "tst-brc-9", name: "De-banding",                       order: 8, status: "PENDING" as const, cost: 200,  completedAt: null },
+    { id: "ts-4-9", planId: plan4.id, templateId: "tst-brc-10", name: "Retainer Delivery",               order: 9, status: "PENDING" as const, cost: 300,  completedAt: null },
+  ];
+
+  for (const s of stagesData) {
+    await prisma.treatmentStage.upsert({
+      where: { id: s.id },
+      update: {},
+      create: {
+        id: s.id,
+        planId: s.planId,
+        templateId: s.templateId,
+        name: s.name,
+        order: s.order,
+        status: s.status,
+        cost: s.cost,
+        ...(s.completedAt ? { completedAt: s.completedAt } : {}),
+      },
+    });
+  }
+
+  // Upcoming Appointments
+  const appointmentsData = [
+    { id: "appt-001", apptRef: "APPT-001", patientId: "pat-1", clinicId: clinicA.id, doctorId: doctorHafiz.id, startTime: nextDate(1, 9),     duration: 60, type: "TREATMENT"     as const, status: "CONFIRMED"  as const, chiefComplaint: "RCT — Cleaning & Shaping (Tooth 16)" },
+    { id: "appt-002", apptRef: "APPT-002", patientId: "pat-2", clinicId: clinicA.id, doctorId: doctorHafiz.id, startTime: nextDate(1, 10, 30), duration: 45, type: "TREATMENT"     as const, status: "SCHEDULED"  as const, chiefComplaint: "Crown Try-In — Tooth 26" },
+    { id: "appt-003", apptRef: "APPT-003", patientId: "pat-7", clinicId: clinicA.id, doctorId: doctorHafiz.id, startTime: nextDate(1, 14),    duration: 30, type: "CLEANING"      as const, status: "SCHEDULED"  as const, chiefComplaint: "Scaling & polishing follow-up" },
+    { id: "appt-004", apptRef: "APPT-004", patientId: "pat-4", clinicId: clinicA.id, doctorId: doctorPriya.id, startTime: nextDate(2, 9),     duration: 60, type: "FOLLOWUP"      as const, status: "SCHEDULED"  as const, chiefComplaint: "Implant osseointegration review — Tooth 46" },
+    { id: "appt-005", apptRef: "APPT-005", patientId: "pat-5", clinicId: clinicA.id, doctorId: doctorHafiz.id, startTime: nextDate(2, 11),    duration: 60, type: "CONSULTATION"  as const, status: "SCHEDULED"  as const, chiefComplaint: "Braces — Records & Study Models" },
+    { id: "appt-006", apptRef: "APPT-006", patientId: "pat-8", clinicId: clinicA.id, doctorId: doctorHafiz.id, startTime: nextDate(2, 14, 30),duration: 30, type: "CHECKUP"       as const, status: "SCHEDULED"  as const, chiefComplaint: "Routine dental check-up" },
+    { id: "appt-007", apptRef: "APPT-007", patientId: "pat-3", clinicId: clinicA.id, doctorId: doctorHafiz.id, startTime: nextDate(3, 9, 30), duration: 30, type: "FOLLOWUP"      as const, status: "SCHEDULED"  as const, chiefComplaint: "Post-RCT follow-up" },
+    { id: "appt-008", apptRef: "APPT-008", patientId: "pat-6", clinicId: clinicB.id, doctorId: doctorPriya.id, startTime: nextDate(3, 15),    duration: 45, type: "CONSULTATION"  as const, status: "SCHEDULED"  as const, chiefComplaint: "Consultation for denture options" },
+    { id: "appt-009", apptRef: "APPT-009", patientId: "pat-1", clinicId: clinicA.id, doctorId: doctorHafiz.id, startTime: nextDate(5, 9),     duration: 60, type: "TREATMENT"     as const, status: "SCHEDULED"  as const, chiefComplaint: "RCT — Obturation (Tooth 16)" },
+    { id: "appt-010", apptRef: "APPT-010", patientId: "pat-2", clinicId: clinicA.id, doctorId: doctorHafiz.id, startTime: nextDate(7, 10),    duration: 60, type: "TREATMENT"     as const, status: "SCHEDULED"  as const, chiefComplaint: "Crown Cementation — Tooth 26" },
+  ];
+
+  for (const a of appointmentsData) {
+    await prisma.appointment.upsert({
+      where: { id: a.id },
+      update: {},
+      create: {
+        id: a.id,
+        apptRef: a.apptRef,
+        patientId: a.patientId,
+        clinicId: a.clinicId,
+        doctorId: a.doctorId,
+        startTime: a.startTime,
+        duration: a.duration,
+        type: a.type,
+        status: a.status,
+        chiefComplaint: a.chiefComplaint,
+      },
+    });
+  }
+
   console.log("✅ Sample data seeded!");
   console.log("");
   console.log("Login accounts (password: admin123)");
