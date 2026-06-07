@@ -13,6 +13,7 @@
 
 import Decimal from "decimal.js";
 import { PrismaClient, Prisma } from "@prisma/client";
+import { prisma as prismaDefault } from "@/lib/prisma";
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
@@ -305,7 +306,10 @@ export function calculateType4(
 // Master orchestration function
 // ─────────────────────────────────────────────────────────────────────────────
 
-const prismaDefault = new PrismaClient();
+function monthRange(monthStr: string): { from: Date; to: Date } {
+  const [y, m] = monthStr.split("-").map(Number);
+  return { from: new Date(y, m - 1, 1), to: new Date(y, m, 1) };
+}
 
 export async function calculateDoctorComprehensivePayroll(
   doctorId: string,
@@ -344,20 +348,35 @@ export async function calculateDoctorComprehensivePayroll(
     hasEngagement,
   );
 
-  // ── 3. Fetch treatments for clinical-fee archetypes ─────────────────────
+  // ── 3. Resolve clinical fees from approved locum statement ──────────────
+  // For all clinical archetypes the finalPayout from the Finance-approved
+  // LocumReconciliationStatement is the authoritative figure — it has been
+  // reviewed and signed by the doctor, the clinic manager, and finance.
+  // Payroll cannot run until the statement reaches FINANCE_APPROVED or LOCKED.
   const needsClinical = contractType !== "PURE_SALARIED";
   let treatments: TreatmentInput[] = [];
+  let approvedClinicalFees: Decimal | null = null;
 
   if (needsClinical) {
-    const [y, m] = monthStr.split("-").map(Number);
+    const stmt = await (prisma as any).locumReconciliationStatement.findUnique({
+      where:  { doctorId_month: { doctorId, month: monthStr } },
+      select: { status: true, finalPayout: true },
+    });
+
+    if (!stmt || !["FINANCE_APPROVED", "LOCKED"].includes(stmt.status)) {
+      throw new Error(
+        `No Finance-approved locum statement found for doctor ${doctorId} month ${monthStr}. ` +
+        `The statement must be signed by the doctor, approved by the clinic manager, and approved ` +
+        `by finance before payroll can be calculated.`
+      );
+    }
+
+    approvedClinicalFees = new Decimal(stmt.finalPayout.toString());
+
+    // Still fetch treatments so ops[] (DoctorCommission rows) can be persisted.
+    const { from, to } = monthRange(monthStr);
     const raw = await prisma.treatment.findMany({
-      where: {
-        doctorId,
-        visit: {
-          visitDate: { gte: new Date(y, m - 1, 1), lt: new Date(y, m, 1) },
-          deletedAt: null,
-        },
-      },
+      where: { doctorId, visit: { visitDate: { gte: from, lt: to }, deletedAt: null } },
     });
     treatments = raw.map(t => ({
       id:           t.id,
@@ -391,7 +410,7 @@ export async function calculateDoctorComprehensivePayroll(
 
     // ── TYPE 2: Locum with Guaranteed Floor ──────────────────────────────
     case "LOCUM_WITH_FLOOR": {
-      const clinicalFees = calculateClinicalFees(treatments);
+      const clinicalFees = approvedClinicalFees ?? calculateClinicalFees(treatments);
       // dayRate comes from DoctorProfile (per-session rate), NOT LocumEngagement.guaranteedFloor
       // LocumEngagement.guaranteedFloor stores the pre-computed total floor (sessions × rate).
       // We use it directly when present; otherwise fall back to sessions × profile dayRate.
@@ -424,7 +443,7 @@ export async function calculateDoctorComprehensivePayroll(
 
     // ── TYPE 3: Pure Professional Fees ───────────────────────────────────
     case "PURE_PROF_FEES": {
-      const clinicalFees = calculateClinicalFees(treatments);
+      const clinicalFees = approvedClinicalFees ?? calculateClinicalFees(treatments);
       const r = calculateType3(clinicalFees);
       grossCalculatedTarget = r.grossTarget;
       salarySlip            = zeroSalarySlip();
@@ -447,7 +466,7 @@ export async function calculateDoctorComprehensivePayroll(
 
     // ── TYPE 4: Dual-Slip Hybrid ──────────────────────────────────────────
     case "DUAL_SLIP_HYBRID": {
-      const clinicalFees = calculateClinicalFees(treatments);
+      const clinicalFees = approvedClinicalFees ?? calculateClinicalFees(treatments);
       // guaranteedFloor on the engagement IS the total floor (not per-session rate)
       const floor = new Decimal(engagement!.guaranteedFloor.toString());
 

@@ -110,7 +110,7 @@ export async function GET(req: NextRequest) {
   const COLS = [
     "Branch","Days","Patients",
     "Prof Fee","Products","SST","Total Sales",
-    "Cash (Curr)","Cash (Next)","Credit Card","FPX","eWallet","Atome",
+    "Cash","Cash (Next Day)","Credit Card","FPX","eWallet","Atome",
     ...panelNames,
     "Panel Total",
   ];

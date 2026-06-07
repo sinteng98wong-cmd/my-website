@@ -10,10 +10,13 @@ const RM = (n: number) =>
   new Intl.NumberFormat("ms-MY", { style: "currency", currency: "MYR" }).format(n);
 
 const STATUS_CONFIG: Record<string, { badge: string; label: string }> = {
-  DRAFT:    { badge: "badge-slate",   label: "Draft"    },
-  APPROVED: { badge: "badge-blue",    label: "Approved" },
-  LOCKED:   { badge: "badge-green",   label: "Locked"   },
-  REVERSED: { badge: "badge-red",     label: "Reversed" },
+  DRAFT:            { badge: "badge-slate",   label: "Draft"            },
+  DOCTOR_SIGNED:    { badge: "badge-blue",    label: "Doctor Signed"    },
+  CM_APPROVED:      { badge: "badge-indigo",  label: "CM Approved"      },
+  FINANCE_APPROVED: { badge: "badge-purple",  label: "Finance Approved" },
+  LOCKED:           { badge: "badge-green",   label: "Locked"           },
+  APPROVED:         { badge: "badge-blue",    label: "Approved"         },
+  REVERSED:         { badge: "badge-red",     label: "Reversed"         },
 };
 
 // ── Section wrapper ───────────────────────────────────────────────────────────
@@ -94,9 +97,11 @@ export default async function LocumSlipPage({ params }: { params: { id: string }
   if (!stmt) notFound();
   if (role === "DOCTOR" && stmt.doctor.userId !== userId) notFound();
 
-  const p          = stmt.payload as any;
-  const canManage  = ["SUPER_ADMIN", "FINANCE"].includes(role);
-  const statusConf = STATUS_CONFIG[stmt.status] ?? STATUS_CONFIG.DRAFT;
+  const p              = stmt.payload as any;
+  const isOwnStatement = stmt.doctor.userId === userId;
+  const canAdjustSplit = ["SUPER_ADMIN", "FINANCE", "CLINIC_MANAGER"].includes(role);
+  const showActions    = isOwnStatement || ["SUPER_ADMIN", "FINANCE", "CLINIC_MANAGER"].includes(role);
+  const statusConf     = STATUS_CONFIG[stmt.status] ?? STATUS_CONFIG.DRAFT;
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 pb-12">
@@ -130,7 +135,7 @@ export default async function LocumSlipPage({ params }: { params: { id: string }
             </p>
             <div className="flex items-center gap-2 mt-1">
               <p className="text-xs text-slate-400">Split rate: {Number(stmt.splitRate)}%</p>
-              {canManage && (
+              {canAdjustSplit && (
                 <AdjustSplitRate
                   id={stmt.id}
                   currentSplitRate={Number(stmt.splitRate)}
@@ -141,9 +146,35 @@ export default async function LocumSlipPage({ params }: { params: { id: string }
           </div>
         </div>
 
-        {canManage && (
+        {/* Approval audit trail */}
+        {(stmt.doctorSignedAt || stmt.cmApprovedAt || stmt.financeApprovedAt) && (
+          <div className="mt-4 pt-4 border-t border-slate-100 space-y-1.5">
+            {stmt.doctorSignedAt && (
+              <p className="text-xs text-slate-500">
+                ✍️ <span className="font-medium">Doctor signed</span> — {new Date(stmt.doctorSignedAt).toLocaleString("en-MY", { dateStyle: "medium", timeStyle: "short" })}
+              </p>
+            )}
+            {stmt.cmApprovedAt && (
+              <p className="text-xs text-slate-500">
+                👍 <span className="font-medium">CM approved</span> by {stmt.cmApprovedBy} — {new Date(stmt.cmApprovedAt).toLocaleString("en-MY", { dateStyle: "medium", timeStyle: "short" })}
+              </p>
+            )}
+            {stmt.financeApprovedAt && (
+              <p className="text-xs text-slate-500">
+                ✅ <span className="font-medium">Finance approved</span> by {stmt.financeApprovedBy} — {new Date(stmt.financeApprovedAt).toLocaleString("en-MY", { dateStyle: "medium", timeStyle: "short" })}
+              </p>
+            )}
+          </div>
+        )}
+
+        {showActions && (
           <div className="mt-5 pt-5 border-t border-slate-100">
-            <LocumSlipActions id={stmt.id} currentStatus={stmt.status} />
+            <LocumSlipActions
+              id={stmt.id}
+              currentStatus={stmt.status}
+              role={role}
+              isOwnStatement={isOwnStatement}
+            />
           </div>
         )}
       </div>

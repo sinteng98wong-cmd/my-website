@@ -76,6 +76,7 @@ export async function createPlanFromTemplate(params: {
           description: t.description,
           order:       t.order,
           cost:        t.defaultCost ?? 0,
+          templateId:  t.id,
         })),
       },
     },

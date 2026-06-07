@@ -1,5 +1,6 @@
 import { requirePermission } from "@/lib/rbac";
 import { prisma } from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 import { getSelectedClinicId } from "@/lib/selected-clinic";
 import Link from "next/link";
 import { LedgerExportButtons } from "./LedgerExportButtons";
@@ -49,10 +50,23 @@ export default async function LedgerPage({
     periodLabel = month;
   }
 
-  const fromISO  = from.toISOString().slice(0, 10);
-  const toISO    = to.toISOString().slice(0, 10);
+  const fromISO = from.toISOString().slice(0, 10);
+  const toISO   = to.toISOString().slice(0, 10);
 
-  const [entries, clinics, panelProviders] = await Promise.all([
+  // SQL filter for clinic (safe — uses parameterised Prisma.sql)
+  const clinicFilter = clinicId
+    ? Prisma.sql`AND v."clinicId" = ${clinicId}`
+    : Prisma.empty;
+
+  type VisitCountRow  = { clinicId: string; day: string; count: bigint };
+  type DoctorSaleRow  = {
+    clinicId: string; day: string;
+    doctorId: string; doctorName: string;
+    visits: bigint; totalBilled: number;
+  };
+
+  const [entries, clinics, panelProviders, visitCountRows, doctorSaleRows] = await Promise.all([
+    // ── Existing: pre-aggregated financial snapshot ──────────────────────
     prisma.dailyLedger.findMany({
       where: {
         date: { gte: from, lte: to },
@@ -61,17 +75,87 @@ export default async function LedgerPage({
       include: { clinic: { select: { id: true, name: true } } },
       orderBy: [{ clinicId: "asc" }, { date: "asc" }],
     }),
+
     prisma.clinic.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } }),
+
     prisma.panelProvider.findMany({
       where: { active: true, ...(clinicId ? { clinicId } : {}) },
       select: { id: true, name: true, code: true },
       orderBy: { name: "asc" },
     }),
+
+    // ── NEW: actual visit counts from Visit table ─────────────────────────
+    prisma.$queryRaw<VisitCountRow[]>(Prisma.sql`
+      SELECT
+        v."clinicId",
+        TO_CHAR(v."visitDate", 'YYYY-MM-DD') AS day,
+        COUNT(*)::bigint                      AS count
+      FROM "Visit" v
+      WHERE v."visitDate" >= ${from}
+        AND v."visitDate" <= ${to}
+        AND v."deletedAt" IS NULL
+        ${clinicFilter}
+      GROUP BY v."clinicId", TO_CHAR(v."visitDate", 'YYYY-MM-DD')
+    `),
+
+    // ── NEW: doctor-level daily sales from Treatment table ────────────────
+    prisma.$queryRaw<DoctorSaleRow[]>(Prisma.sql`
+      SELECT
+        v."clinicId",
+        TO_CHAR(v."visitDate", 'YYYY-MM-DD')   AS day,
+        dp.id                                   AS "doctorId",
+        u.name                                  AS "doctorName",
+        COUNT(DISTINCT v.id)::bigint            AS visits,
+        COALESCE(SUM(t."billedAmount"), 0)::float AS "totalBilled"
+      FROM "Treatment" t
+      JOIN "Visit"         v  ON v.id  = t."visitId"
+      JOIN "DoctorProfile" dp ON dp.id = t."doctorId"
+      JOIN "User"          u  ON u.id  = dp."userId"
+      WHERE v."visitDate" >= ${from}
+        AND v."visitDate" <= ${to}
+        AND v."deletedAt" IS NULL
+        AND t."doctorId"  IS NOT NULL
+        ${clinicFilter}
+      GROUP BY v."clinicId",
+               TO_CHAR(v."visitDate", 'YYYY-MM-DD'),
+               dp.id,
+               u.name
+      ORDER BY TO_CHAR(v."visitDate", 'YYYY-MM-DD') ASC, u.name ASC
+    `),
   ]);
 
-  // ── Totals ───────────────────────────────────────────────────────────────
+  // ── Build visit-count lookup maps ─────────────────────────────────────────
+  // key: "clinicId_YYYY-MM-DD" → visit count
+  const visitCountMap  = new Map<string, number>();
+  // key: clinicId → total visits in period
+  const clinicVisitMap = new Map<string, number>();
+  let totalVisits = 0;
+  for (const row of visitCountRows) {
+    const key = `${row.clinicId}_${row.day}`;
+    const n   = Number(row.count);
+    visitCountMap.set(key, n);
+    clinicVisitMap.set(row.clinicId, (clinicVisitMap.get(row.clinicId) ?? 0) + n);
+    totalVisits += n;
+  }
+
+  // ── Doctor summary (period aggregation) ──────────────────────────────────
+  const doctorSummaryMap = new Map<string, { name: string; visits: number; totalBilled: number }>();
+  for (const row of doctorSaleRows) {
+    const existing = doctorSummaryMap.get(row.doctorId) ?? { name: row.doctorName, visits: 0, totalBilled: 0 };
+    existing.visits      += Number(row.visits);
+    existing.totalBilled += Number(row.totalBilled);
+    doctorSummaryMap.set(row.doctorId, existing);
+  }
+  const doctorSummaryRows = [...doctorSummaryMap.entries()]
+    .map(([id, d]) => ({ id, ...d }))
+    .sort((a, b) => b.totalBilled - a.totalBilled);
+
+  // clinic name lookup for doctor-detail table
+  const clinicNameMap = new Map(clinics.map(c => [c.id, c.name]));
+
+  // ── Financial totals (from DailyLedger) ──────────────────────────────────
   const T = {
-    patients:  entries.reduce((s, e) => s + e.patientCount, 0),
+    patients:  totalVisits,                                                  // ← actual visits
     profFee:   entries.reduce((s, e) => s + Number(e.professionalFee), 0),
     products:  entries.reduce((s, e) => s + Number(e.productSales), 0),
     sst:       entries.reduce((s, e) => s + Number(e.sst), 0),
@@ -100,7 +184,7 @@ export default async function LedgerPage({
   }
   const panelTotal = Object.values(panelTotals).reduce((s, v) => s + v, 0);
 
-  // Per-clinic rollup
+  // ── Per-clinic rollup ─────────────────────────────────────────────────────
   const clinicMap: Record<string, {
     name: string; patients: number; profFee: number; products: number; sst: number; total: number;
     cashCurr: number; cashNext: number; card: number; fpx: number; ewallet: number; atome: number;
@@ -108,10 +192,15 @@ export default async function LedgerPage({
   }> = {};
   for (const e of entries) {
     if (!clinicMap[e.clinicId]) {
-      clinicMap[e.clinicId] = { name: e.clinic.name, patients: 0, profFee: 0, products: 0, sst: 0, total: 0, cashCurr: 0, cashNext: 0, card: 0, fpx: 0, ewallet: 0, atome: 0, panel: 0, days: 0 };
+      clinicMap[e.clinicId] = {
+        name:     e.clinic.name,
+        patients: clinicVisitMap.get(e.clinicId) ?? 0, // ← actual visits
+        profFee: 0, products: 0, sst: 0, total: 0,
+        cashCurr: 0, cashNext: 0, card: 0, fpx: 0, ewallet: 0, atome: 0,
+        panel: 0, days: 0,
+      };
     }
     const c = clinicMap[e.clinicId];
-    c.patients += e.patientCount;
     c.profFee  += Number(e.professionalFee);
     c.products += Number(e.productSales);
     c.sst      += Number(e.sst);
@@ -180,7 +269,7 @@ export default async function LedgerPage({
             </div>
           </div>
 
-          {/* Date inputs — month for monthly/daily, from-to for period */}
+          {/* Date inputs */}
           {view === "period" ? (
             <>
               <div>
@@ -226,10 +315,10 @@ export default async function LedgerPage({
       {entries.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
           {[
-            { label: "Cash",    value: cashTotal,    sub: `Curr: ${fmt(T.cashCurr)} · Next: ${fmt(T.cashNext)}`, color: "text-green-700"  },
-            { label: "Card",    value: cardTotal,    sub: "Credit card",                                           color: "text-blue-700"   },
-            { label: "Digital", value: digitalTotal, sub: `FPX · eWallet · Atome`,                                color: "text-indigo-700" },
-            { label: "Panel",   value: panelTotal,   sub: `${panelProviders.length} provider(s)`,                 color: "text-purple-700" },
+            { label: "Cash",    value: cashTotal,    sub: "Cash collections",              color: "text-green-700"  },
+            { label: "Card",    value: cardTotal,    sub: "Credit card",                   color: "text-blue-700"   },
+            { label: "Digital", value: digitalTotal, sub: "FPX · eWallet · Atome",         color: "text-indigo-700" },
+            { label: "Panel",   value: panelTotal,   sub: `${panelProviders.length} provider(s)`, color: "text-purple-700" },
           ].map(c => (
             <div key={c.label} className="stat-card">
               <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">{c.label}</p>
@@ -253,8 +342,7 @@ export default async function LedgerPage({
               <tr>
                 <th className="px-4 py-2.5 text-left text-xs font-medium text-slate-500 uppercase tracking-wide border-r border-slate-200">Branch</th>
                 <th className="px-4 py-2.5 text-right text-xs font-medium text-slate-500 uppercase tracking-wide">Pts</th>
-                <th className="px-4 py-2.5 text-right text-xs font-medium text-green-600 uppercase tracking-wide">Cash (Curr)</th>
-                <th className="px-4 py-2.5 text-right text-xs font-medium text-green-500 uppercase tracking-wide">Cash (Next)</th>
+                <th className="px-4 py-2.5 text-right text-xs font-medium text-green-600 uppercase tracking-wide">Cash</th>
                 <th className="px-4 py-2.5 text-right text-xs font-medium text-blue-600 uppercase tracking-wide">Card</th>
                 <th className="px-4 py-2.5 text-right text-xs font-medium text-indigo-600 uppercase tracking-wide">FPX</th>
                 <th className="px-4 py-2.5 text-right text-xs font-medium text-indigo-600 uppercase tracking-wide">eWallet</th>
@@ -267,14 +355,13 @@ export default async function LedgerPage({
             </thead>
             <tbody>
               {clinicRows.length === 0 && (
-                <tr><td colSpan={12 + panelProviders.length} className="px-5 py-8 text-center text-slate-400">No ledger entries for this period</td></tr>
+                <tr><td colSpan={11 + panelProviders.length} className="px-5 py-8 text-center text-slate-400">No ledger entries for this period</td></tr>
               )}
               {clinicRows.map(c => (
                 <tr key={c.name} className="table-row">
                   <td className="px-4 py-3 font-medium text-slate-900 border-r border-slate-100">{c.name}</td>
                   <td className="px-4 py-3 text-right text-slate-600">{c.patients}</td>
-                  <td className="px-4 py-3 text-right font-mono text-green-700">{fmtShort(c.cashCurr)}</td>
-                  <td className="px-4 py-3 text-right font-mono text-green-500">{fmtShort(c.cashNext)}</td>
+                  <td className="px-4 py-3 text-right font-mono text-green-700">{fmtShort(c.cashCurr + c.cashNext)}</td>
                   <td className="px-4 py-3 text-right font-mono text-blue-700">{fmtShort(c.card)}</td>
                   <td className="px-4 py-3 text-right font-mono text-indigo-700">{fmtShort(c.fpx)}</td>
                   <td className="px-4 py-3 text-right font-mono text-indigo-600">{fmtShort(c.ewallet)}</td>
@@ -289,8 +376,7 @@ export default async function LedgerPage({
                 <tr className="bg-slate-50 border-t-2 border-slate-300 font-semibold text-sm">
                   <td className="px-4 py-3 text-slate-900 border-r border-slate-100">TOTAL</td>
                   <td className="px-4 py-3 text-right">{T.patients}</td>
-                  <td className="px-4 py-3 text-right font-mono text-green-700">{fmt(T.cashCurr)}</td>
-                  <td className="px-4 py-3 text-right font-mono text-green-500">{fmt(T.cashNext)}</td>
+                  <td className="px-4 py-3 text-right font-mono text-green-700">{fmt(T.cashCurr + T.cashNext)}</td>
                   <td className="px-4 py-3 text-right font-mono text-blue-700">{fmt(T.card)}</td>
                   <td className="px-4 py-3 text-right font-mono text-indigo-700">{fmt(T.fpx)}</td>
                   <td className="px-4 py-3 text-right font-mono text-indigo-600">{fmt(T.ewallet)}</td>
@@ -306,6 +392,120 @@ export default async function LedgerPage({
         </div>
       </div>
 
+      {/* ── Sales by Doctor ── */}
+      <div className="card mb-6">
+        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-900">Sales by Doctor — {periodLabel}</h2>
+            <p className="text-xs text-slate-400 mt-0.5">
+              {showDailyTable ? "Daily breakdown per doctor" : "Period summary per doctor"} · based on treatment billings
+            </p>
+          </div>
+          <span className="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-full font-medium">
+            {doctorSummaryRows.length} doctor{doctorSummaryRows.length !== 1 ? "s" : ""}
+          </span>
+        </div>
+
+        <div className="overflow-x-auto">
+          {showDailyTable ? (
+            /* ── Daily / Period view: one row per doctor per day ── */
+            <table className="w-full text-sm">
+              <thead className="table-header">
+                <tr>
+                  <th className="px-4 py-2.5 text-left text-xs font-medium text-slate-500 uppercase tracking-wide">Date</th>
+                  {!clinicId && (
+                    <th className="px-4 py-2.5 text-left text-xs font-medium text-slate-500 uppercase tracking-wide">Branch</th>
+                  )}
+                  <th className="px-4 py-2.5 text-left text-xs font-medium text-slate-500 uppercase tracking-wide">Doctor</th>
+                  <th className="px-4 py-2.5 text-right text-xs font-medium text-slate-500 uppercase tracking-wide">Pts</th>
+                  <th className="px-4 py-2.5 text-right text-xs font-medium text-slate-500 uppercase tracking-wide">Sales</th>
+                  <th className="px-4 py-2.5 text-right text-xs font-medium text-slate-400 uppercase tracking-wide">Avg / Pt</th>
+                </tr>
+              </thead>
+              <tbody>
+                {doctorSaleRows.length === 0 && (
+                  <tr>
+                    <td colSpan={clinicId ? 5 : 6} className="px-5 py-8 text-center text-slate-400">
+                      No treatment data for this period
+                    </td>
+                  </tr>
+                )}
+                {doctorSaleRows.map((row, i) => {
+                  const visits = Number(row.visits);
+                  const billed = Number(row.totalBilled);
+                  return (
+                    <tr key={i} className="table-row">
+                      <td className="px-4 py-2.5 text-slate-700 whitespace-nowrap">
+                        {new Date(row.day + "T00:00:00").toLocaleDateString("en-MY", {
+                          day: "2-digit", month: "short", weekday: "short",
+                          ...(view === "period" ? { year: "numeric" } : {}),
+                        })}
+                      </td>
+                      {!clinicId && (
+                        <td className="px-4 py-2.5 text-slate-500 text-xs">
+                          {clinicNameMap.get(row.clinicId) ?? row.clinicId}
+                        </td>
+                      )}
+                      <td className="px-4 py-2.5 font-medium text-slate-900">{row.doctorName}</td>
+                      <td className="px-4 py-2.5 text-right text-slate-600">{visits}</td>
+                      <td className="px-4 py-2.5 text-right font-mono text-slate-900">{fmtShort(billed)}</td>
+                      <td className="px-4 py-2.5 text-right font-mono text-slate-400">
+                        {visits > 0 ? fmtShort(billed / visits) : "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : (
+            /* ── Monthly view: summary per doctor ── */
+            <table className="w-full text-sm">
+              <thead className="table-header">
+                <tr>
+                  <th className="px-4 py-2.5 text-left text-xs font-medium text-slate-500 uppercase tracking-wide">Doctor</th>
+                  <th className="px-4 py-2.5 text-right text-xs font-medium text-slate-500 uppercase tracking-wide">Patients</th>
+                  <th className="px-4 py-2.5 text-right text-xs font-medium text-slate-500 uppercase tracking-wide">Total Sales</th>
+                  <th className="px-4 py-2.5 text-right text-xs font-medium text-slate-400 uppercase tracking-wide">Avg / Patient</th>
+                </tr>
+              </thead>
+              <tbody>
+                {doctorSummaryRows.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="px-5 py-8 text-center text-slate-400">
+                      No treatment data for this period
+                    </td>
+                  </tr>
+                )}
+                {doctorSummaryRows.map(d => (
+                  <tr key={d.id} className="table-row">
+                    <td className="px-4 py-3 font-medium text-slate-900">{d.name}</td>
+                    <td className="px-4 py-3 text-right text-slate-600">{d.visits}</td>
+                    <td className="px-4 py-3 text-right font-mono text-slate-900">{fmtShort(d.totalBilled)}</td>
+                    <td className="px-4 py-3 text-right font-mono text-slate-400">
+                      {d.visits > 0 ? fmtShort(d.totalBilled / d.visits) : "—"}
+                    </td>
+                  </tr>
+                ))}
+                {doctorSummaryRows.length > 0 && (() => {
+                  const sumVisits = doctorSummaryRows.reduce((s, d) => s + d.visits, 0);
+                  const sumBilled = doctorSummaryRows.reduce((s, d) => s + d.totalBilled, 0);
+                  return (
+                    <tr className="bg-slate-50 border-t-2 border-slate-300 font-semibold text-sm">
+                      <td className="px-4 py-3 text-slate-900">TOTAL</td>
+                      <td className="px-4 py-3 text-right">{sumVisits}</td>
+                      <td className="px-4 py-3 text-right font-mono">{fmt(sumBilled)}</td>
+                      <td className="px-4 py-3 text-right font-mono text-slate-400">
+                        {sumVisits > 0 ? fmtShort(sumBilled / sumVisits) : "—"}
+                      </td>
+                    </tr>
+                  );
+                })()}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+
       {/* ── Daily Entries Table (Daily + Period views) ── */}
       {showDailyTable && (
         <div className="card overflow-x-auto">
@@ -317,7 +517,7 @@ export default async function LedgerPage({
           <table className="w-full text-sm">
             <thead className="table-header">
               <tr>
-                {["Date","Branch","Pts","Prof Fee","Products","SST","Total","Cash (Curr)","Cash (Next)","Card","FPX","eWallet","Atome"].map(h => (
+                {["Date","Branch","Pts","Prof Fee","Products","SST","Total","Cash","Card","FPX","eWallet","Atome"].map(h => (
                   <th key={h} className="px-3 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                 ))}
                 {panelProviders.map(p => (
@@ -327,23 +527,24 @@ export default async function LedgerPage({
             </thead>
             <tbody>
               {entries.length === 0 && (
-                <tr><td colSpan={13 + panelProviders.length} className="px-5 py-8 text-center text-slate-400">No records</td></tr>
+                <tr><td colSpan={12 + panelProviders.length} className="px-5 py-8 text-center text-slate-400">No records</td></tr>
               )}
               {entries.map(e => {
-                const pc = e.panelCollections as Record<string, number> ?? {};
+                const dateKey    = `${e.clinicId}_${e.date.toISOString().slice(0, 10)}`;
+                const realPts    = visitCountMap.get(dateKey) ?? 0;
+                const pc         = e.panelCollections as Record<string, number> ?? {};
                 return (
                   <tr key={e.id} className="table-row">
                     <td className="px-3 py-2 whitespace-nowrap text-slate-700">
                       {new Date(e.date).toLocaleDateString("en-MY", { day: "2-digit", month: "short", weekday: "short", year: view === "period" ? "numeric" : undefined })}
                     </td>
                     <td className="px-3 py-2 text-slate-600">{e.clinic.name}</td>
-                    <td className="px-3 py-2 text-center">{e.patientCount}</td>
+                    <td className="px-3 py-2 text-center">{realPts}</td>
                     <td className="px-3 py-2 font-mono">{fmtShort(Number(e.professionalFee))}</td>
                     <td className="px-3 py-2 font-mono">{fmtShort(Number(e.productSales))}</td>
                     <td className="px-3 py-2 font-mono text-slate-500">{fmtShort(Number(e.sst))}</td>
                     <td className="px-3 py-2 font-mono font-semibold">{fmtShort(Number(e.totalSales))}</td>
-                    <td className="px-3 py-2 font-mono text-green-700">{fmtShort(Number(e.cashCurrent))}</td>
-                    <td className="px-3 py-2 font-mono text-green-500">{fmtShort(Number(e.cashNext))}</td>
+                    <td className="px-3 py-2 font-mono text-green-700">{fmtShort(Number(e.cashCurrent) + Number(e.cashNext))}</td>
                     <td className="px-3 py-2 font-mono text-blue-700">{fmtShort(Number(e.creditCard))}</td>
                     <td className="px-3 py-2 font-mono text-indigo-700">{fmtShort(Number(e.fpx))}</td>
                     <td className="px-3 py-2 font-mono text-indigo-600">{fmtShort(Number(e.ewallet))}</td>
@@ -362,8 +563,7 @@ export default async function LedgerPage({
                   <td className="px-3 py-3 font-mono">{fmtShort(T.products)}</td>
                   <td className="px-3 py-3 font-mono">{fmtShort(T.sst)}</td>
                   <td className="px-3 py-3 font-mono text-blue-700">{fmtShort(T.total)}</td>
-                  <td className="px-3 py-3 font-mono text-green-700">{fmtShort(T.cashCurr)}</td>
-                  <td className="px-3 py-3 font-mono text-green-500">{fmtShort(T.cashNext)}</td>
+                  <td className="px-3 py-3 font-mono text-green-700">{fmtShort(T.cashCurr + T.cashNext)}</td>
                   <td className="px-3 py-3 font-mono text-blue-700">{fmtShort(T.card)}</td>
                   <td className="px-3 py-3 font-mono text-indigo-700">{fmtShort(T.fpx)}</td>
                   <td className="px-3 py-3 font-mono text-indigo-600">{fmtShort(T.ewallet)}</td>

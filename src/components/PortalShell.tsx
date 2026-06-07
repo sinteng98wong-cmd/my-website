@@ -76,7 +76,7 @@ export function PortalShell({
           <span className="ml-3 font-semibold text-sm text-zinc-800">DentalOS</span>
         </div>
 
-        <div className="p-8 max-w-7xl mx-auto">{children}</div>
+        <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto">{children}</div>
       </main>
     </div>
   );

@@ -52,6 +52,7 @@ const CreateSchema = z.object({
     description: z.string().optional(),
     order:       z.number().int(),
     cost:        z.number().nonnegative(),
+    templateId:  z.string().optional(),
   })).optional(),
   paymentMode:     z.enum(["DEPOSIT_BALANCE", "PAY_PER_STAGE", "FULL_UPFRONT"]).default("DEPOSIT_BALANCE"),
   discount:        z.number().nonnegative().default(0),

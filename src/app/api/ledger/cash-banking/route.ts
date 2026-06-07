@@ -11,8 +11,8 @@ const CreateSchema = z.object({
   expectedCash: z.number().nonnegative(),
   bankInAmount: z.number().nonnegative(),
   bankInDate:   z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  depositType:  z.enum(["ONLINE_TRANSFER", "CASH_DEPOSIT_MACHINE"]).default("ONLINE_TRANSFER"),
   referenceNo:  z.string().optional(),
-  bankName:     z.string().optional(),
   notes:        z.string().optional(),
 });
 
@@ -35,7 +35,9 @@ export async function GET(req: NextRequest) {
       ...(clinicId ? { clinicId } : {}),
       ...(month ? { periodFrom: dateFilter } : {}),
     },
-    include: { clinic: { select: { name: true } } },
+    include: {
+      clinic: { select: { name: true, bankName: true, bankAccountNo: true, bankAccountName: true } },
+    },
     orderBy: { bankInDate: "desc" },
   });
 
@@ -66,8 +68,8 @@ export async function POST(req: NextRequest) {
       bankInAmount: d.bankInAmount,
       variance,
       bankInDate:   new Date(d.bankInDate + "T00:00:00"),
+      depositType:  d.depositType,
       referenceNo:  d.referenceNo,
-      bankName:     d.bankName,
       notes:        d.notes,
       recordedById: (session.user as any)?.id,
     },

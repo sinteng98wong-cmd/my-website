@@ -5,42 +5,41 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 type Stage = {
-  id: string; name: string; description: string|null; order: number; status: string;
-  cost: number; completedAt: string|null; clinicalNotes: string|null; nextStageDate: string|null;
-  performedBy: { name: string }|null; visit: { id: string; visitRef: string }|null;
+  id: string; name: string; description: string | null; order: number; status: string;
+  cost: number; completedAt: string | null; clinicalNotes: string | null; nextStageDate: string | null;
+  performedBy: { name: string } | null; visit: { id: string; visitRef: string } | null;
 };
 type Payment = {
-  id: string; amount: number; paymentType: string; paidAt: string; notes: string|null;
-  recordedBy: { name: string }|null; invoice: { id: string; invoiceRef: string }|null;
+  id: string; amount: number; paymentType: string; paidAt: string; notes: string | null;
+  recordedBy: { name: string } | null; invoice: { id: string; invoiceRef: string } | null;
 };
 type Plan = {
   id: string; planRef: string; title: string; status: string; paymentMode: string;
-  toothCodes: string[]; notes: string|null;
+  toothCodes: string[]; notes: string | null;
   subtotal: number; discount: number; sstAmount: number; totalAmount: number;
   depositRequired: number; totalPaid: number;
-  acceptedAt: string|null; acceptedByName: string|null; quotedAt: string|null; completedAt: string|null;
-  patient: { id: string; name: string; patientRef: string; phone: string|null };
+  acceptedAt: string | null; acceptedByName: string | null; quotedAt: string | null; completedAt: string | null;
+  patient: { id: string; name: string; patientRef: string; phone: string | null };
   clinic:  { id: string; name: string };
   dentist: { id: string; name: string };
   stages:  Stage[]; payments: Payment[];
 };
 type Visit = { id: string; visitRef: string; visitDate: string };
 
-const STATUS_COLORS: Record<string,string> = {
-  DRAFT:"badge-slate", QUOTED:"badge-amber", ACCEPTED:"badge-blue",
-  IN_PROGRESS:"badge-cyan", COMPLETED:"badge-green", CANCELLED:"badge-red",
-};
-const STAGE_COLORS: Record<string,string> = {
-  PENDING:"text-slate-400", IN_PROGRESS:"text-blue-500",
-  COMPLETED:"text-green-600", SKIPPED:"text-slate-300",
+// Local editable stage row (no API id yet for new rows)
+type EditRow = { _key: string; id?: string; name: string; description: string; cost: string };
+
+const STATUS_COLORS: Record<string, string> = {
+  DRAFT: "badge-slate", QUOTED: "badge-amber", ACCEPTED: "badge-blue",
+  IN_PROGRESS: "badge-cyan", COMPLETED: "badge-green", CANCELLED: "badge-red",
 };
 
 function fmt(n: number) {
-  return new Intl.NumberFormat("ms-MY",{ style:"currency",currency:"MYR" }).format(n);
+  return new Intl.NumberFormat("ms-MY", { style: "currency", currency: "MYR" }).format(n);
 }
-function fmtDate(d: string|null) {
+function fmtDate(d: string | null) {
   if (!d) return "—";
-  return new Date(d).toLocaleDateString("en-MY",{ dateStyle:"medium" });
+  return new Date(d).toLocaleDateString("en-MY", { dateStyle: "medium" });
 }
 
 export function PlanDetailClient({ plan: initial, visits, role }: {
@@ -56,10 +55,10 @@ export function PlanDetailClient({ plan: initial, visits, role }: {
   const [accepting,  setAccepting]  = useState(false);
 
   // Complete stage modal
-  const [activeStage,   setActiveStage]   = useState<Stage|null>(null);
-  const [stageVisitId,  setStageVisitId]  = useState(visits[0]?.id ?? "");
-  const [stageNotes,    setStageNotes]    = useState("");
-  const [stageNextDate, setStageNextDate] = useState("");
+  const [activeStage,     setActiveStage]     = useState<Stage | null>(null);
+  const [stageVisitId,    setStageVisitId]    = useState(visits[0]?.id ?? "");
+  const [stageNotes,      setStageNotes]      = useState("");
+  const [stageNextDate,   setStageNextDate]   = useState("");
   const [completingStage, setCompletingStage] = useState(false);
 
   // Payment modal
@@ -68,6 +67,91 @@ export function PlanDetailClient({ plan: initial, visits, role }: {
   const [payType,     setPayType]     = useState("DEPOSIT");
   const [payNotes,    setPayNotes]    = useState("");
   const [paying,      setPaying]      = useState(false);
+
+  // Stage editing (DRAFT only)
+  const [editingStages, setEditingStages] = useState(false);
+  const [editRows,      setEditRows]      = useState<EditRow[]>([]);
+  const [savingStages,  setSavingStages]  = useState(false);
+
+  function openStageEditor() {
+    setEditRows(
+      plan.stages
+        .slice()
+        .sort((a, b) => a.order - b.order)
+        .map(s => ({ _key: s.id, id: s.id, name: s.name, description: s.description ?? "", cost: String(s.cost) }))
+    );
+    setEditingStages(true);
+  }
+
+  function updateRow(key: string, field: keyof Omit<EditRow, "_key" | "id">, val: string) {
+    setEditRows(rows => rows.map(r => r._key === key ? { ...r, [field]: val } : r));
+  }
+
+  function moveRow(i: number, dir: -1 | 1) {
+    const j = i + dir;
+    if (j < 0 || j >= editRows.length) return;
+    setEditRows(rows => {
+      const next = [...rows];
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
+  }
+
+  function addRow() {
+    setEditRows(rows => [
+      ...rows,
+      { _key: `new-${Date.now()}`, name: "", description: "", cost: "0" },
+    ]);
+  }
+
+  function removeRow(key: string) {
+    setEditRows(rows => rows.filter(r => r._key !== key));
+  }
+
+  async function saveStages() {
+    setSavingStages(true);
+    const existingIds = new Set(plan.stages.map(s => s.id));
+
+    // Delete stages that were removed
+    const keepIds = new Set(editRows.filter(r => r.id).map(r => r.id!));
+    const toDelete = plan.stages.filter(s => !keepIds.has(s.id));
+    for (const s of toDelete) {
+      await fetch(`/api/treatment-plans/${plan.id}/stages/${s.id}`, { method: "DELETE" });
+    }
+
+    // Update existing + create new in order
+    for (let i = 0; i < editRows.length; i++) {
+      const row = editRows[i];
+      const order = i + 1;
+      if (row.id && existingIds.has(row.id)) {
+        await fetch(`/api/treatment-plans/${plan.id}/stages/${row.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name:        row.name,
+            description: row.description || null,
+            order,
+            cost:        parseFloat(row.cost) || 0,
+          }),
+        });
+      } else {
+        await fetch(`/api/treatment-plans/${plan.id}/stages`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name:        row.name,
+            description: row.description || undefined,
+            order,
+            cost:        parseFloat(row.cost) || 0,
+          }),
+        });
+      }
+    }
+
+    setSavingStages(false);
+    setEditingStages(false);
+    await reload();
+  }
 
   async function reload() {
     const res = await fetch(`/api/treatment-plans/${plan.id}`);
@@ -97,7 +181,7 @@ export function PlanDetailClient({ plan: initial, visits, role }: {
     const res = await fetch(`/api/treatment-plans/${plan.id}/stages/${activeStage.id}/complete`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        visitId: stageVisitId,
+        visitId:       stageVisitId,
         clinicalNotes: stageNotes || undefined,
         nextStageDate: stageNextDate || undefined,
       }),
@@ -123,12 +207,16 @@ export function PlanDetailClient({ plan: initial, visits, role }: {
     await reload();
   }
 
-  const outstanding   = Math.max(0, Number(plan.totalAmount) - Number(plan.totalPaid));
-  const depositPaid   = plan.payments.filter(p => p.paymentType === "DEPOSIT").reduce((s,p) => s + Number(p.amount), 0);
+  const outstanding     = Math.max(0, Number(plan.totalAmount) - Number(plan.totalPaid));
+  const depositPaid     = plan.payments.filter(p => p.paymentType === "DEPOSIT").reduce((s, p) => s + Number(p.amount), 0);
   const completedStages = plan.stages.filter(s => s.status === "COMPLETED").length;
-  const canActOnStages  = ["ACCEPTED","IN_PROGRESS"].includes(plan.status);
-  const canManage       = ["SUPER_ADMIN","CLINIC_MANAGER","DOCTOR"].includes(role);
+  const canActOnStages  = ["ACCEPTED", "IN_PROGRESS"].includes(plan.status);
+  const canManage       = ["SUPER_ADMIN", "CLINIC_MANAGER", "DOCTOR"].includes(role);
   const nextPending     = plan.stages.find(s => s.status === "PENDING" || s.status === "IN_PROGRESS");
+
+  // Live totals while editing
+  const editSubtotal = editRows.reduce((s, r) => s + (parseFloat(r.cost) || 0), 0);
+  const editTotal    = Math.max(0, editSubtotal - Number(plan.discount));
 
   return (
     <div className="max-w-3xl space-y-5">
@@ -139,7 +227,7 @@ export function PlanDetailClient({ plan: initial, visits, role }: {
           <div>
             <div className="flex items-center gap-2">
               <h1 className="page-title">{plan.title}</h1>
-              <span className={STATUS_COLORS[plan.status] ?? "badge-slate"}>{plan.status.replace("_"," ")}</span>
+              <span className={STATUS_COLORS[plan.status] ?? "badge-slate"}>{plan.status.replace("_", " ")}</span>
             </div>
             <p className="text-sm text-slate-500 mt-1">
               {plan.planRef} · {plan.patient.name} · {plan.clinic.name}
@@ -153,7 +241,7 @@ export function PlanDetailClient({ plan: initial, visits, role }: {
             {plan.status === "QUOTED" && canManage && (
               <button onClick={() => setShowAccept(true)} className="btn-primary">Record Acceptance</button>
             )}
-            {!["COMPLETED","CANCELLED"].includes(plan.status) && canManage && (
+            {!["COMPLETED", "CANCELLED"].includes(plan.status) && canManage && (
               <button onClick={handleCancel} className="btn-outline text-red-600 hover:bg-red-50">Cancel Plan</button>
             )}
           </div>
@@ -166,8 +254,8 @@ export function PlanDetailClient({ plan: initial, visits, role }: {
       <div className="grid grid-cols-4 gap-3">
         {[
           { label: "Total Amount",   value: fmt(Number(plan.totalAmount)),  color: "text-slate-800" },
-          { label: "Paid",           value: fmt(Number(plan.totalPaid)),     color: "text-green-700" },
-          { label: "Outstanding",    value: fmt(outstanding),                color: outstanding > 0 ? "text-amber-700" : "text-slate-400" },
+          { label: "Paid",           value: fmt(Number(plan.totalPaid)),    color: "text-green-700" },
+          { label: "Outstanding",    value: fmt(outstanding),               color: outstanding > 0 ? "text-amber-700" : "text-slate-400" },
           { label: "Deposit Status", value: depositPaid >= Number(plan.depositRequired) ? "Met ✓" : `${fmt(depositPaid)} / ${fmt(Number(plan.depositRequired))}`, color: depositPaid >= Number(plan.depositRequired) ? "text-green-700" : "text-amber-700" },
         ].map(c => (
           <div key={c.label} className="stat-card p-4">
@@ -181,41 +269,134 @@ export function PlanDetailClient({ plan: initial, visits, role }: {
       <div className="card overflow-hidden">
         <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-slate-700">Quotation</h2>
-          {plan.quotedAt && <span className="text-xs text-slate-400">Sent {fmtDate(plan.quotedAt)}</span>}
-        </div>
-        <table className="w-full text-sm">
-          <thead className="table-header">
-            <tr>
-              {["#","Stage","Description","Cost"].map(h => (
-                <th key={h} className="px-5 py-2.5 text-left text-xs font-medium text-slate-500 uppercase tracking-wide">{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {plan.stages.map(s => (
-              <tr key={s.id} className="table-row">
-                <td className="px-5 py-2.5 text-slate-400 text-xs">{s.order}</td>
-                <td className="px-5 py-2.5 font-medium text-slate-800">{s.name}</td>
-                <td className="px-5 py-2.5 text-slate-500 text-xs">{s.description ?? "—"}</td>
-                <td className="px-5 py-2.5 font-mono text-slate-700">{fmt(Number(s.cost))}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <div className="px-5 py-3 border-t border-slate-200 bg-slate-50 space-y-1.5 text-sm">
-          <div className="flex justify-between text-slate-500"><span>Subtotal</span><span className="font-mono">{fmt(Number(plan.subtotal))}</span></div>
-          {Number(plan.discount) > 0 && <div className="flex justify-between text-emerald-600"><span>Discount</span><span className="font-mono">({fmt(Number(plan.discount))})</span></div>}
-          <div className="flex justify-between font-semibold text-slate-800 pt-1 border-t border-slate-200"><span>Total</span><span className="font-mono">{fmt(Number(plan.totalAmount))}</span></div>
-        </div>
-        {plan.acceptedAt && (
-          <div className="px-5 py-3 border-t border-green-200 bg-green-50 text-xs text-green-700">
-            ✓ Accepted by <strong>{plan.acceptedByName}</strong> on {fmtDate(plan.acceptedAt)}
+          <div className="flex items-center gap-3">
+            {plan.quotedAt && <span className="text-xs text-slate-400">Sent {fmtDate(plan.quotedAt)}</span>}
+            {plan.status === "DRAFT" && canManage && !editingStages && (
+              <button onClick={openStageEditor} className="btn-outline text-xs py-1 px-3">Edit Stages</button>
+            )}
           </div>
+        </div>
+
+        {/* ── Edit mode ── */}
+        {editingStages ? (
+          <div className="p-5 space-y-3">
+            <div className="space-y-2">
+              {editRows.map((row, i) => (
+                <div key={row._key} className="grid grid-cols-12 gap-2 items-start p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                  {/* Reorder */}
+                  <div className="col-span-1 flex flex-col items-center gap-0.5 pt-1">
+                    <button type="button" onClick={() => moveRow(i, -1)} disabled={i === 0}
+                      className="text-slate-300 hover:text-slate-600 disabled:opacity-30 text-xs">▲</button>
+                    <span className="text-xs text-slate-400 font-mono">{i + 1}</span>
+                    <button type="button" onClick={() => moveRow(i, 1)} disabled={i === editRows.length - 1}
+                      className="text-slate-300 hover:text-slate-600 disabled:opacity-30 text-xs">▼</button>
+                  </div>
+                  {/* Name */}
+                  <div className="col-span-4">
+                    <input className="form-input text-sm" placeholder="Stage name"
+                      value={row.name} onChange={e => updateRow(row._key, "name", e.target.value)} />
+                  </div>
+                  {/* Description */}
+                  <div className="col-span-4">
+                    <input className="form-input text-sm" placeholder="Description (optional)"
+                      value={row.description} onChange={e => updateRow(row._key, "description", e.target.value)} />
+                  </div>
+                  {/* Cost */}
+                  <div className="col-span-2">
+                    <input className="form-input text-sm" type="number" step="0.01" min="0" placeholder="Cost"
+                      value={row.cost} onChange={e => updateRow(row._key, "cost", e.target.value)} />
+                  </div>
+                  {/* Remove */}
+                  <div className="col-span-1 pt-1 flex justify-end">
+                    <button type="button" onClick={() => removeRow(row._key)}
+                      className="text-red-400 hover:text-red-600 text-lg leading-none">✕</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Add row */}
+            <button type="button" onClick={addRow} className="btn-outline text-xs py-1.5 px-3 w-full">
+              + Add Stage
+            </button>
+
+            {/* Live totals */}
+            <div className="bg-slate-50 rounded-lg p-4 text-sm space-y-1.5 border border-slate-200">
+              <div className="flex justify-between text-slate-500">
+                <span>Subtotal ({editRows.length} stages)</span>
+                <span className="font-mono">{fmt(editSubtotal)}</span>
+              </div>
+              {Number(plan.discount) > 0 && (
+                <div className="flex justify-between text-emerald-600">
+                  <span>Discount</span>
+                  <span className="font-mono">({fmt(Number(plan.discount))})</span>
+                </div>
+              )}
+              <div className="flex justify-between font-semibold text-slate-800 pt-1 border-t border-slate-200">
+                <span>Total</span>
+                <span className="font-mono">{fmt(editTotal)}</span>
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-2 justify-end pt-1">
+              <button type="button" onClick={() => setEditingStages(false)} className="btn-outline text-sm">
+                Discard
+              </button>
+              <button type="button" onClick={saveStages} disabled={savingStages} className="btn-primary text-sm">
+                {savingStages ? "Saving…" : "Save Stages"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          /* ── Read mode ── */
+          <>
+            <table className="w-full text-sm">
+              <thead className="table-header">
+                <tr>
+                  {["#", "Stage", "Description", "Cost"].map(h => (
+                    <th key={h} className="px-5 py-2.5 text-left text-xs font-medium text-slate-500 uppercase tracking-wide">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {plan.stages.map(s => (
+                  <tr key={s.id} className="table-row">
+                    <td className="px-5 py-2.5 text-slate-400 text-xs">{s.order}</td>
+                    <td className="px-5 py-2.5 font-medium text-slate-800">{s.name}</td>
+                    <td className="px-5 py-2.5 text-slate-500 text-xs">{s.description ?? "—"}</td>
+                    <td className="px-5 py-2.5 font-mono text-slate-700">{fmt(Number(s.cost))}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="px-5 py-3 border-t border-slate-200 bg-slate-50 space-y-1.5 text-sm">
+              <div className="flex justify-between text-slate-500">
+                <span>Subtotal</span>
+                <span className="font-mono">{fmt(Number(plan.subtotal))}</span>
+              </div>
+              {Number(plan.discount) > 0 && (
+                <div className="flex justify-between text-emerald-600">
+                  <span>Discount</span>
+                  <span className="font-mono">({fmt(Number(plan.discount))})</span>
+                </div>
+              )}
+              <div className="flex justify-between font-semibold text-slate-800 pt-1 border-t border-slate-200">
+                <span>Total</span>
+                <span className="font-mono">{fmt(Number(plan.totalAmount))}</span>
+              </div>
+            </div>
+            {plan.acceptedAt && (
+              <div className="px-5 py-3 border-t border-green-200 bg-green-50 text-xs text-green-700">
+                ✓ Accepted by <strong>{plan.acceptedByName}</strong> on {fmtDate(plan.acceptedAt)}
+              </div>
+            )}
+          </>
         )}
       </div>
 
       {/* Progress timeline */}
-      {["ACCEPTED","IN_PROGRESS","COMPLETED"].includes(plan.status) && (
+      {["ACCEPTED", "IN_PROGRESS", "COMPLETED"].includes(plan.status) && (
         <div className="card overflow-hidden">
           <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-slate-700">Progress</h2>
@@ -226,10 +407,9 @@ export function PlanDetailClient({ plan: initial, visits, role }: {
               const isNext = s.id === nextPending?.id;
               return (
                 <div key={s.id} className="flex gap-4">
-                  {/* Step indicator */}
                   <div className="flex flex-col items-center">
                     <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold border-2 ${
-                      s.status === "COMPLETED" ? "bg-green-100 border-green-400 text-green-700" :
+                      s.status === "COMPLETED"   ? "bg-green-100 border-green-400 text-green-700" :
                       s.status === "IN_PROGRESS" ? "bg-blue-100 border-blue-400 text-blue-700" :
                       "bg-white border-slate-200 text-slate-400"
                     }`}>
@@ -239,7 +419,6 @@ export function PlanDetailClient({ plan: initial, visits, role }: {
                       <div className={`w-0.5 h-8 mt-1 ${s.status === "COMPLETED" ? "bg-green-300" : "bg-slate-200"}`} />
                     )}
                   </div>
-                  {/* Stage content */}
                   <div className="flex-1 pb-4">
                     <div className="flex items-center justify-between">
                       <div>
@@ -251,9 +430,8 @@ export function PlanDetailClient({ plan: initial, visits, role }: {
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-sm text-slate-600">{fmt(Number(s.cost))}</span>
                         {isNext && canActOnStages && canManage && (
-                          <button onClick={() => { setActiveStage(s); setStageVisitId(visits[0]?.id ?? ""); }} className="btn-primary text-xs py-1 px-3">
-                            Mark Complete
-                          </button>
+                          <button onClick={() => { setActiveStage(s); setStageVisitId(visits[0]?.id ?? ""); }}
+                            className="btn-primary text-xs py-1 px-3">Mark Complete</button>
                         )}
                       </div>
                     </div>
@@ -264,8 +442,8 @@ export function PlanDetailClient({ plan: initial, visits, role }: {
                           {s.performedBy && <span className="text-slate-500">by {s.performedBy.name}</span>}
                           {s.visit && <Link href={`/visits/${s.visit.id}`} className="text-blue-600 hover:underline">{s.visit.visitRef}</Link>}
                         </div>
-                        {s.clinicalNotes && <p className="text-slate-600 mt-1">{s.clinicalNotes}</p>}
-                        {s.nextStageDate && <p className="text-blue-600">Next: {fmtDate(s.nextStageDate)}</p>}
+                        {s.clinicalNotes  && <p className="text-slate-600 mt-1">{s.clinicalNotes}</p>}
+                        {s.nextStageDate  && <p className="text-blue-600">Next: {fmtDate(s.nextStageDate)}</p>}
                       </div>
                     )}
                   </div>
@@ -290,7 +468,7 @@ export function PlanDetailClient({ plan: initial, visits, role }: {
           <table className="w-full text-sm">
             <thead className="table-header">
               <tr>
-                {["Date","Type","Amount","Invoice","By","Notes"].map(h => (
+                {["Date", "Type", "Amount", "Invoice", "By", "Notes"].map(h => (
                   <th key={h} className="px-5 py-2.5 text-left text-xs font-medium text-slate-500 uppercase tracking-wide">{h}</th>
                 ))}
               </tr>
@@ -393,7 +571,6 @@ export function PlanDetailClient({ plan: initial, visits, role }: {
                   <label className="form-label">Payment Type</label>
                   <select className="form-input" value={payType} onChange={e => setPayType(e.target.value)}>
                     <option value="DEPOSIT">Deposit</option>
-                    <option value="STAGE">Stage Payment</option>
                     <option value="BALANCE">Final Balance</option>
                     <option value="OTHER">Other</option>
                   </select>

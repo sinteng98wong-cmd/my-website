@@ -141,7 +141,7 @@ export function methodLabel(method: PaymentMethod, subType?: string | null, pane
   if (method === "CREDIT_CARD" && subType === "AMEX") return "CC (Amex)";
   if (method === "CREDIT_CARD") return "CC (Visa/MC)";
   const labels: Record<string, string> = {
-    CASH_CURRENT: "Cash", CASH_NEXT: "Cash (Next)", FPX: "FPX",
+    CASH_CURRENT: "Cash", CASH_NEXT: "Cash (Next Day)", FPX: "FPX",
     EWALLET: "eWallet", ATOME: "Atome", DEPOSIT: "Deposit",
   };
   return labels[method] ?? method;

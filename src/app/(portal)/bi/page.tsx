@@ -322,73 +322,73 @@ export default function BIPage() {
   return (
     <div className="space-y-6 pb-10">
       {/* ── TOP BAR ───────────────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="space-y-3">
         <div>
           <h1 className="page-title flex items-center gap-2">
-            <TrendingUp size={22} className="text-blue-500" /> Business Intelligence
+            <TrendingUp size={20} className="text-blue-500" /> Business Intelligence
           </h1>
           <p className="text-sm text-slate-500 mt-0.5">Revenue &amp; staff productivity insights</p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Period selector */}
+        {/* Controls — stack on mobile, row on sm+ */}
+        <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2">
           <select
             value={period}
             onChange={(e) => setPeriod(e.target.value)}
-            className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white"
+            className="text-sm border border-slate-200 rounded-lg px-3 py-2.5 bg-white col-span-2 sm:col-auto"
           >
             <option value="this_month">This Month</option>
             <option value="last_month">Last Month</option>
             <option value="this_quarter">This Quarter</option>
             <option value="this_year">This Year</option>
-            <option value="custom">Custom</option>
+            <option value="custom">Custom Range</option>
           </select>
+
           {period === "custom" && (
             <>
               <input
                 type="date"
                 value={from}
                 onChange={(e) => setFrom(e.target.value)}
-                className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                className="text-sm border border-slate-200 rounded-lg px-3 py-2.5 bg-white"
               />
               <input
                 type="date"
                 value={to}
                 onChange={(e) => setTo(e.target.value)}
-                className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white"
+                className="text-sm border border-slate-200 rounded-lg px-3 py-2.5 bg-white"
               />
             </>
           )}
 
-          {/* Clinic selector */}
           {isCrossClinic ? (
             <select
               value={clinicId}
               onChange={(e) => setClinicId(e.target.value)}
-              className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white"
+              className="text-sm border border-slate-200 rounded-lg px-3 py-2.5 bg-white col-span-2 sm:col-auto"
             >
               {clinics.map((c) => (
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </select>
           ) : (
-            <span className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-slate-50 text-slate-600">
+            <span className="text-sm border border-slate-200 rounded-lg px-3 py-2.5 bg-slate-50 text-slate-600 truncate col-span-2 sm:col-auto">
               {clinics.find((c) => c.id === clinicId)?.name ?? "—"}
             </span>
           )}
 
           <button
             onClick={() => setRefreshKey((k) => k + 1)}
-            className="flex items-center gap-1.5 text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white hover:bg-slate-50"
+            className="flex items-center justify-center gap-1.5 text-sm border border-slate-200 rounded-lg px-3 py-2.5 bg-white hover:bg-slate-50"
           >
             <RefreshCw size={14} /> Refresh
           </button>
 
           <button
             onClick={exportExcel}
-            className="flex items-center gap-1.5 text-sm bg-blue-600 text-white rounded-lg px-3 py-2 hover:bg-blue-700"
+            className="flex items-center justify-center gap-1.5 text-sm bg-blue-600 text-white rounded-lg px-3 py-2.5 hover:bg-blue-700"
           >
-            <Download size={14} /> Export Excel
+            <Download size={14} /> Export
           </button>
         </div>
       </div>
@@ -437,7 +437,7 @@ export default function BIPage() {
         ) : singleTrend.length === 0 ? (
           <p className="text-sm text-slate-400 py-10 text-center">No data for this period</p>
         ) : (
-          <ResponsiveContainer width="100%" height={220}>
+          <ResponsiveContainer width="100%" height={180}>
             <LineChart data={singleTrend} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis
@@ -470,14 +470,14 @@ export default function BIPage() {
       {/* ── ROW 3: CROSS-BRANCH COMPARISON (SUPER_ADMIN / FINANCE) ────── */}
       {isCrossClinic && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-slate-900">Cross-Branch Comparison</h2>
-            <div className="flex gap-1">
+            <div className="flex flex-wrap gap-1">
               {(["totalRevenue","invoiceCount","avgInvoiceValue","newPatients"] as const).map((m) => (
                 <button
                   key={m}
                   onClick={() => setCompareMetric(m)}
-                  className={`text-xs px-2.5 py-1 rounded-lg border transition-colors ${
+                  className={`text-xs px-2.5 py-1.5 rounded-lg border transition-colors ${
                     compareMetric === m
                       ? "bg-blue-600 text-white border-blue-600"
                       : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
@@ -676,9 +676,9 @@ export default function BIPage() {
         {loadingDoctor ? (
           <SectionSkeleton />
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+          <div className="grid grid-cols-1 xl:grid-cols-5 gap-4">
             {/* Doctor revenue bar (top 10) */}
-            <div className="card p-5 lg:col-span-2">
+            <div className="card p-5 xl:col-span-2">
               <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-3">
                 Revenue by Doctor (Top 10)
               </h3>
@@ -715,7 +715,7 @@ export default function BIPage() {
             </div>
 
             {/* Sortable doctor table */}
-            <div className="card overflow-x-auto lg:col-span-3">
+            <div className="card overflow-x-auto xl:col-span-3">
               <table className="w-full text-sm">
                 <thead className="table-header">
                   <tr>
