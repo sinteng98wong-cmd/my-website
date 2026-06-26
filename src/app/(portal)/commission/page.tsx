@@ -72,7 +72,7 @@ export default async function CommissionPage({
   const [doctorComms, staffComms, stmtRows] = await Promise.all([
     tab === "doctor"
       ? prisma.doctorCommission.findMany({
-          where:   { month, ...(isDoctor ? { doctorId: userId } : {}) },
+          where:   { month, ...(selectedClinicId ? { treatment: { visit: { clinicId: selectedClinicId } } } : {}), ...(isDoctor ? { doctorId: userId } : {}) },
           include: {
             treatment: {
               include: {

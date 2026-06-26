@@ -53,8 +53,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     data.externalReferrerEmail = t === "EXTERNAL" ? body.externalReferrerEmail || null : null;
   }
 
-  const patient = await prisma.patient.update({ where: { id: params.id }, data });
-  return NextResponse.json(patient);
+  try {
+    const patient = await prisma.patient.update({ where: { id: params.id }, data });
+    return NextResponse.json(patient);
+  } catch {
+    return NextResponse.json({ error: "Patient not found" }, { status: 404 });
+  }
 }
 
 /** Soft-delete a patient. Hard delete is never used. */

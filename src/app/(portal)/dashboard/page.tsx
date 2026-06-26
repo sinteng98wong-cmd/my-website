@@ -55,7 +55,7 @@ export default async function DashboardPage() {
       include: { homeClinic: { select: { name: true } } },
     }),
     prisma.doctorCommission.aggregate({
-      where: { status: "PENDING_LOCK" },
+      where: { status: "PENDING_LOCK", ...(clinicId ? { treatment: { visit: { clinicId } } } : {}) },
       _sum: { finalPayout: true },
     }),
     ["SUPER_ADMIN","CLINIC_MANAGER"].includes(role)
@@ -82,7 +82,13 @@ export default async function DashboardPage() {
           orderBy: { startTime: "asc" },
           take: 10,
         })
-      : Promise.resolve([]),
+      : Promise.resolve([] as Array<{
+          id: string; startTime: Date; type: string; status: string;
+          duration: number; chiefComplaint: string | null;
+          patient: { name: string; patientRef: string };
+          doctor: { name: string };
+          clinic: { name: string };
+        }>),
   ]);
 
   const stats: { label: string; value: string; sub: string; Icon: LucideIcon; iconClass: string }[] = [
@@ -161,24 +167,28 @@ export default async function DashboardPage() {
       </div>
 
       {/* License alerts */}
-      {(licenseAlerts as any[]).length > 0 && (
-        <div className="mb-5 space-y-2">
-          {(licenseAlerts as any[]).find((g: any) => g.status === "EXPIRED") && (
-            <Link href="/licenses" className="flex items-center gap-3 rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-red-700 text-sm font-medium hover:bg-red-100 transition-colors">
-              <AlertCircle size={16} className="flex-shrink-0" />
-              <span>{(licenseAlerts as any[]).find((g: any) => g.status === "EXPIRED")._count} license(s) expired — click to review</span>
-              <ArrowRight size={14} className="ml-auto flex-shrink-0" />
-            </Link>
-          )}
-          {(licenseAlerts as any[]).find((g: any) => g.status === "EXPIRING_SOON") && (
-            <Link href="/licenses" className="flex items-center gap-3 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-amber-700 text-sm font-medium hover:bg-amber-100 transition-colors">
-              <AlertTriangle size={16} className="flex-shrink-0" />
-              <span>{(licenseAlerts as any[]).find((g: any) => g.status === "EXPIRING_SOON")._count} license(s) expiring within 90 days</span>
-              <ArrowRight size={14} className="ml-auto flex-shrink-0" />
-            </Link>
-          )}
-        </div>
-      )}
+      {(licenseAlerts as any[]).length > 0 && (() => {
+        const expired      = (licenseAlerts as any[]).find((g: any) => g.status === "EXPIRED");
+        const expiringSoon = (licenseAlerts as any[]).find((g: any) => g.status === "EXPIRING_SOON");
+        return (
+          <div className="mb-5 space-y-2">
+            {expired && (
+              <Link href="/licenses" className="flex items-center gap-3 rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-red-700 text-sm font-medium hover:bg-red-100 transition-colors">
+                <AlertCircle size={16} className="flex-shrink-0" />
+                <span>{expired._count} license(s) expired — click to review</span>
+                <ArrowRight size={14} className="ml-auto flex-shrink-0" />
+              </Link>
+            )}
+            {expiringSoon && (
+              <Link href="/licenses" className="flex items-center gap-3 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-amber-700 text-sm font-medium hover:bg-amber-100 transition-colors">
+                <AlertTriangle size={16} className="flex-shrink-0" />
+                <span>{expiringSoon._count} license(s) expiring within 90 days</span>
+                <ArrowRight size={14} className="ml-auto flex-shrink-0" />
+              </Link>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Quick actions */}
       {links.length > 0 && (

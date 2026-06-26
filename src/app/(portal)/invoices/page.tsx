@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requirePermission } from "@/lib/rbac";
 import { prisma } from "@/lib/prisma";
 import { notDeleted } from "@/lib/soft-delete";
+import { getSelectedClinicId } from "@/lib/selected-clinic";
 import { FileText, CheckCircle, Clock, ChevronRight } from "lucide-react";
 
 function fmt(n: number | string) {
@@ -30,8 +31,10 @@ export default async function InvoicesPage({
   const nextDay  = new Date(date);
   nextDay.setDate(nextDay.getDate() + 1);
 
+  const clinicId = getSelectedClinicId();
+
   const invoices = await prisma.invoice.findMany({
-    where: notDeleted({ createdAt: { gte: date, lt: nextDay } }),
+    where: notDeleted({ createdAt: { gte: date, lt: nextDay }, ...(clinicId ? { visit: { clinicId } } : {}) }),
     include: {
       visit:    { include: { patient: { select: { name: true, patientRef: true } } } },
       payments: { include: { panelProvider: { select: { name: true } } } },
@@ -61,8 +64,7 @@ export default async function InvoicesPage({
       </div>
 
       {/* Summary stats */}
-      {invoices.length > 0 && (
-        <div className="grid grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-3 gap-4 mb-6">
           <div className="stat-card flex items-start gap-3">
             <div className="icon-box-green"><CheckCircle size={20} /></div>
             <div>
@@ -90,7 +92,6 @@ export default async function InvoicesPage({
             </div>
           </div>
         </div>
-      )}
 
       <div className="card overflow-x-auto">
         <table className="w-full text-sm">
