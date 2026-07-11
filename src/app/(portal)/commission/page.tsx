@@ -5,7 +5,8 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { DoctorCommissionTable } from "./DoctorCommissionTable";
 import { StaffCommissionTable }  from "./StaffCommissionTable";
-import { Stethoscope, Users, Calculator, Banknote, FileCheck, type LucideIcon } from "lucide-react";
+import { LocumPayoutTable, type LocumDoctorGroup } from "./LocumPayoutTable";
+import { Stethoscope, Users, Calculator, Banknote, FileCheck, Wallet, type LucideIcon } from "lucide-react";
 const CalcIcon = Calculator;
 
 const RM = (n: number) =>
@@ -46,6 +47,7 @@ function buildDoctorGroups(rows: any[]) {
 const TABS = [
   { key: "doctor", label: "Doctor Commission", Icon: Stethoscope },
   { key: "staff",  label: "Staff Commission",  Icon: Users },
+  { key: "locum",  label: "Locum Payout",      Icon: Wallet },
   { key: "calc",   label: "Payroll Calculator", Icon: Calculator },
 ] as const;
 
@@ -69,7 +71,13 @@ export default async function CommissionPage({
   const { getSelectedClinicId } = await import("@/lib/selected-clinic");
   const selectedClinicId = getSelectedClinicId() ?? "";
 
-  const [doctorComms, staffComms, stmtRows] = await Promise.all([
+  // DoctorProfile id for the signed-in doctor (needed for locum tab ownership check)
+  const ownDoctorProfile = isDoctor
+    ? await prisma.doctorProfile.findFirst({ where: { userId: userId }, select: { id: true } })
+    : null;
+  const ownDoctorProfileId = ownDoctorProfile?.id ?? null;
+
+  const [doctorComms, staffComms, stmtRows, locumLines] = await Promise.all([
     tab === "doctor"
       ? prisma.doctorCommission.findMany({
           where:   { month, ...(selectedClinicId ? { treatment: { visit: { clinicId: selectedClinicId } } } : {}), ...(isDoctor ? { doctorId: userId } : {}) },
@@ -103,12 +111,105 @@ export default async function CommissionPage({
           select: { id: true, doctorId: true, status: true, finalPayout: true },
         })
       : Promise.resolve([]),
+
+    // Locum payout lines — used in the Locum tab
+    tab === "locum"
+      ? (prisma as any).locumPayoutLine.findMany({
+          where: {
+            month,
+            ...(selectedClinicId ? { clinicId: selectedClinicId } : {}),
+            ...(isDoctor && ownDoctorProfileId ? { doctorProfileId: ownDoctorProfileId } : {}),
+          },
+          include: {
+            treatment: {
+              include: {
+                treatmentType: { select: { code: true, name: true } },
+                visit:         { include: { patient: { select: { name: true, patientRef: true } } } },
+              },
+            },
+            treatmentPlan: {
+              select: { planRef: true, title: true, status: true, totalAmount: true, totalPaid: true },
+            },
+            doctorProfile: {
+              select: {
+                id:      true,
+                dayRate: true,
+                user:    { select: { name: true } },
+                engagements: {
+                  where:  { month },
+                  select: { sessionsWorked: true },
+                },
+              },
+            },
+          },
+          orderBy: { createdAt: "asc" },
+        })
+      : Promise.resolve([]),
   ]);
 
   // Build a quick lookup: doctorProfileId → statement
   const stmtByDoctor = new Map<string, any>(
     (stmtRows as any[]).map((s: any) => [s.doctorId, s]),
   );
+
+  // Group locum lines by doctor
+  function buildLocumGroups(lines: any[]): LocumDoctorGroup[] {
+    const map = new Map<string, LocumDoctorGroup>();
+    for (const l of lines) {
+      const dp  = l.doctorProfile;
+      const did = dp.id as string;
+      if (!map.has(did)) {
+        const sessionsWorked = (dp.engagements as any[]).reduce((s: number, e: any) => s + (e.sessionsWorked ?? 0), 0);
+        const dayRate        = Number(dp.dayRate ?? 0);
+        map.set(did, {
+          doctorProfileId: did,
+          doctorName:      dp.user?.name ?? "Unknown Doctor",
+          dayRate,
+          sessionsWorked,
+          basicPayFloor:   sessionsWorked * dayRate,
+          totalEntitled:   0,
+          totalReleased:   0,
+          lines:           [],
+        });
+      }
+      const g = map.get(did)!;
+      const line = {
+        id:                 l.id,
+        category:           l.category,
+        status:             l.status,
+        billedAmount:       Number(l.billedAmount),
+        labFee:             Number(l.labFee),
+        labFeeConfirmed:    l.labFeeConfirmed,
+        sst:                Number(l.sst),
+        netPool:            Number(l.netPool),
+        entitledAmount:     Number(l.entitledAmount),
+        releasedAmount:     Number(l.releasedAmount),
+        counterVerifiedAt:  l.counterVerifiedAt?.toISOString() ?? null,
+        doctorVerifiedAt:   l.doctorVerifiedAt?.toISOString()  ?? null,
+        labFeeLoggedAt:     l.labFeeLoggedAt?.toISOString()    ?? null,
+        completionMarkedAt: l.completionMarkedAt?.toISOString() ?? null,
+        pendingReleaseAt:   l.pendingReleaseAt?.toISOString()  ?? null,
+        paidAt:             l.paidAt?.toISOString()            ?? null,
+        forceReleasedAt:    l.forceReleasedAt?.toISOString()   ?? null,
+        notes:              l.notes ?? null,
+        treatment: {
+          treatmentType: { name: l.treatment.treatmentType.name, code: l.treatment.treatmentType.code },
+          visit:         { patient: { name: l.treatment.visit.patient.name, patientRef: l.treatment.visit.patient.patientRef } },
+          labJobId:      l.treatment.labJobId ?? null,
+        },
+        treatmentPlan: l.treatmentPlan
+          ? { planRef: l.treatmentPlan.planRef, title: l.treatmentPlan.title, status: l.treatmentPlan.status,
+              totalAmount: Number(l.treatmentPlan.totalAmount), totalPaid: Number(l.treatmentPlan.totalPaid) }
+          : null,
+      };
+      g.lines.push(line);
+      g.totalEntitled += line.entitledAmount;
+      g.totalReleased += line.releasedAmount;
+    }
+    return Array.from(map.values());
+  }
+
+  const locumGroups = buildLocumGroups(locumLines as any[]);
 
   // Summary stats
   const totalDoctor = doctorComms.reduce((s: number, c: any) => s + Number(c.finalPayout), 0);
@@ -207,6 +308,15 @@ export default async function CommissionPage({
           month={month}
           canRun={canRun}
           canLock={canLock}
+        />
+      )}
+
+      {tab === "locum" && (
+        <LocumPayoutTable
+          groups={locumGroups}
+          month={month}
+          role={role}
+          ownDoctorId={ownDoctorProfileId}
         />
       )}
 
