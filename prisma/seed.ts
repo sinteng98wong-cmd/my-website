@@ -1331,6 +1331,182 @@ async function main() {
     });
   }
 
+  // ══════════════════════════════════════════════════════════════════════
+  // Locum Payout Lines — sample data for Commission › Locum Payout tab
+  // One line per category, at different workflow stages, all for Dr. Hafiz
+  // in the CURRENT month so the tab shows data without changing the month.
+  // ══════════════════════════════════════════════════════════════════════
+  const locumMonth = todayMYT.slice(0, 7); // "YYYY-MM" in MYT
+
+  // Extra treatment types for ortho / aligner scenarios
+  await prisma.treatmentType.upsert({
+    where: { id: "tx-ortho-bond" },
+    update: {},
+    create: { id: "tx-ortho-bond", code: "ORTHO_START", name: "Ortho — Braces Bonding", defaultPrice: 5500, sstApplicable: false },
+  });
+  await prisma.treatmentType.upsert({
+    where: { id: "tx-aligner" },
+    update: {},
+    create: { id: "tx-aligner", code: "ALIGNER", name: "Clear Aligner Package", defaultPrice: 8000, sstApplicable: false },
+  });
+
+  // Guaranteed floor for the current month: 8 sessions × RM500 dayRate = RM4,000
+  const currEng = await prisma.locumEngagement.findFirst({
+    where: { doctorProfileId: doctorHafizProfile.id, month: locumMonth },
+  });
+  if (!currEng) {
+    await prisma.locumEngagement.create({
+      data: { doctorProfileId: doctorHafizProfile.id, clinicId: clinicA.id, month: locumMonth, sessionsWorked: 8, guaranteedFloor: 4000 },
+    });
+  }
+
+  const lmDate = (day: number, hour = 10) =>
+    new Date(`${locumMonth}-${String(day).padStart(2, "0")}T${String(hour).padStart(2, "0")}:00:00+08:00`);
+
+  // Visits — one per payout scenario, all Dr. Hafiz @ Clinic A
+  const locumVisits = [
+    { id: "visit-lp-1", visitRef: "V-LP-001", patientId: "pat-1", day: 2 },
+    { id: "visit-lp-2", visitRef: "V-LP-002", patientId: "pat-4", day: 3 },
+    { id: "visit-lp-3", visitRef: "V-LP-003", patientId: "pat-2", day: 5 },
+    { id: "visit-lp-4", visitRef: "V-LP-004", patientId: "pat-5", day: 8 },
+    { id: "visit-lp-5", visitRef: "V-LP-005", patientId: "pat-7", day: 9 },
+    { id: "visit-lp-6", visitRef: "V-LP-006", patientId: "pat-8", day: 10 },
+  ];
+  for (const v of locumVisits) {
+    await prisma.visit.upsert({
+      where: { id: v.id },
+      update: {},
+      create: { id: v.id, visitRef: v.visitRef, patientId: v.patientId, clinicId: clinicA.id, visitDate: lmDate(v.day) },
+    });
+  }
+
+  // Lab job for the crown case — drives the "Log Lab Fee" (Step 3) action
+  const lpLabJob = await prisma.labJob.upsert({
+    where: { labJobRef: "LJ-LP-001" },
+    update: {},
+    create: {
+      labJobRef: "LJ-LP-001", visitId: "visit-lp-3", vendorId: labVendor.id, clinicId: clinicA.id,
+      status: "RECEIVED", workDescription: "Porcelain crown — Tooth 26", estimatedFee: 350,
+    },
+  });
+
+  // Treatments — doctorSplit on the payout line (40%) is the locum's share
+  const locumTreatments = [
+    { id: "trt-lp-1", visitId: "visit-lp-1", treatmentTypeId: "tx-scaling",    billed: 120,  collected: 120,  labFee: 0,    labJobId: null as string | null },
+    { id: "trt-lp-2", visitId: "visit-lp-2", treatmentTypeId: "tx-extraction", billed: 80,   collected: 80,   labFee: 0,    labJobId: null },
+    { id: "trt-lp-3", visitId: "visit-lp-3", treatmentTypeId: "tx-crown",      billed: 1800, collected: 1800, labFee: 350,  labJobId: lpLabJob.id },
+    { id: "trt-lp-4", visitId: "visit-lp-4", treatmentTypeId: "tx-ortho-bond", billed: 5500, collected: 1000, labFee: 0,    labJobId: null },
+    { id: "trt-lp-5", visitId: "visit-lp-5", treatmentTypeId: "tx-aligner",    billed: 8000, collected: 3000, labFee: 2000, labJobId: null },
+    { id: "trt-lp-6", visitId: "visit-lp-6", treatmentTypeId: "tx-filling",    billed: 180,  collected: 180,  labFee: 0,    labJobId: null },
+  ];
+  for (const t of locumTreatments) {
+    await prisma.treatment.upsert({
+      where: { id: t.id },
+      update: {},
+      create: {
+        id: t.id, visitId: t.visitId, treatmentTypeId: t.treatmentTypeId,
+        billedAmount: t.billed, collectedAmount: t.collected,
+        doctorId: doctorHafizProfile.id, doctorSplit: 100, labFee: t.labFee, sst: 0,
+        ...(t.labJobId ? { labJobId: t.labJobId } : {}),
+      },
+    });
+  }
+
+  // Payout lines — 40% locum split; entitled = (billed − lab − sst) × 40%
+  const locumPayoutLines = [
+    // 1. ONE_OFF, fully PAID — every step done
+    {
+      id: "lpl-1", treatmentId: "trt-lp-1", category: "ONE_OFF", status: "PAID",
+      billed: 120, collected: 120, labFee: 0, labFeeConfirmed: true, netPool: 120, entitled: 48, released: 48,
+      counterVerifiedAt: lmDate(2, 13), counterVerifiedBy: receptionist.id,
+      doctorVerifiedAt: lmDate(2, 14),  doctorVerifiedBy: doctorHafiz.id,
+      completionMarkedAt: lmDate(2, 14), completionMarkedBy: doctorHafiz.id,
+      pendingReleaseAt: lmDate(3, 9), paidAt: lmDate(5, 17), paidBy: manager.id,
+      planId: null as string | null, notes: null as string | null,
+    },
+    // 2. ONE_OFF, verified but not marked complete — next action: Mark Complete
+    {
+      id: "lpl-2", treatmentId: "trt-lp-2", category: "ONE_OFF", status: "ENTITLED",
+      billed: 80, collected: 80, labFee: 0, labFeeConfirmed: true, netPool: 80, entitled: 32, released: 0,
+      counterVerifiedAt: lmDate(3, 13), counterVerifiedBy: receptionist.id,
+      doctorVerifiedAt: lmDate(3, 14),  doctorVerifiedBy: doctorHafiz.id,
+      completionMarkedAt: null as Date | null, completionMarkedBy: null as string | null,
+      pendingReleaseAt: null as Date | null, paidAt: null as Date | null, paidBy: null as string | null,
+      planId: null, notes: null,
+    },
+    // 3. MULTI_STAGE crown with lab job — locked, lab fee still estimated → Log Lab Fee
+    {
+      id: "lpl-3", treatmentId: "trt-lp-3", category: "MULTI_STAGE", status: "LOCKED_PENDING_COMPLETION",
+      billed: 1800, collected: 1800, labFee: 350, labFeeConfirmed: false, netPool: 1450, entitled: 580, released: 0,
+      counterVerifiedAt: lmDate(5, 13), counterVerifiedBy: receptionist.id,
+      doctorVerifiedAt: lmDate(5, 14),  doctorVerifiedBy: doctorHafiz.id,
+      completionMarkedAt: null, completionMarkedBy: null,
+      pendingReleaseAt: null, paidAt: null, paidBy: null,
+      planId: plan2.id, notes: "Awaiting physical lab invoice from Bestdent",
+    },
+    // 4. ORTHO_BONDING — 50% released, awaiting payment → Mark Paid (Finance)
+    {
+      id: "lpl-4", treatmentId: "trt-lp-4", category: "ORTHO_BONDING", status: "PENDING_RELEASE",
+      billed: 5500, collected: 1000, labFee: 0, labFeeConfirmed: true, netPool: 5500, entitled: 2200, released: 1100,
+      counterVerifiedAt: lmDate(8, 13), counterVerifiedBy: receptionist.id,
+      doctorVerifiedAt: lmDate(8, 14),  doctorVerifiedBy: doctorHafiz.id,
+      completionMarkedAt: lmDate(8, 15), completionMarkedBy: doctorHafiz.id,
+      pendingReleaseAt: lmDate(9, 9), paidAt: null, paidBy: null,
+      planId: plan4.id, notes: "Bonding release = 50% of entitlement; balance on debond",
+    },
+    // 5. ALIGNER — patient paid 37.5% of package, release locked until ≥70%
+    {
+      id: "lpl-5", treatmentId: "trt-lp-5", category: "ALIGNER", status: "ENTITLED",
+      billed: 8000, collected: 3000, labFee: 2000, labFeeConfirmed: true, netPool: 6000, entitled: 2400, released: 0,
+      counterVerifiedAt: lmDate(9, 13), counterVerifiedBy: receptionist.id,
+      doctorVerifiedAt: lmDate(9, 14),  doctorVerifiedBy: doctorHafiz.id,
+      completionMarkedAt: null, completionMarkedBy: null,
+      pendingReleaseAt: null, paidAt: null, paidBy: null,
+      planId: null, notes: "Patient paid 37.5% — 30% release unlocks at 70% of package price",
+    },
+    // 6. ONE_OFF, brand-new — no steps done → Verify Cash (counter)
+    {
+      id: "lpl-6", treatmentId: "trt-lp-6", category: "ONE_OFF", status: "ENTITLED",
+      billed: 180, collected: 180, labFee: 0, labFeeConfirmed: true, netPool: 180, entitled: 72, released: 0,
+      counterVerifiedAt: null, counterVerifiedBy: null,
+      doctorVerifiedAt: null, doctorVerifiedBy: null,
+      completionMarkedAt: null, completionMarkedBy: null,
+      pendingReleaseAt: null, paidAt: null, paidBy: null,
+      planId: null, notes: null,
+    },
+  ];
+  for (const l of locumPayoutLines) {
+    await (prisma as any).locumPayoutLine.upsert({
+      where: { id: l.id },
+      update: {},
+      create: {
+        id: l.id,
+        treatmentId: l.treatmentId,
+        doctorProfileId: doctorHafizProfile.id,
+        clinicId: clinicA.id,
+        month: locumMonth,
+        category: l.category,
+        billedAmount: l.billed,
+        collectedAmount: l.collected,
+        labFee: l.labFee,
+        labFeeConfirmed: l.labFeeConfirmed,
+        sst: 0,
+        doctorSplit: 40,
+        netPool: l.netPool,
+        entitledAmount: l.entitled,
+        releasedAmount: l.released,
+        status: l.status,
+        counterVerifiedAt: l.counterVerifiedAt, counterVerifiedBy: l.counterVerifiedBy,
+        doctorVerifiedAt: l.doctorVerifiedAt,   doctorVerifiedBy: l.doctorVerifiedBy,
+        completionMarkedAt: l.completionMarkedAt, completionMarkedBy: l.completionMarkedBy,
+        pendingReleaseAt: l.pendingReleaseAt,
+        paidAt: l.paidAt, paidBy: l.paidBy,
+        treatmentPlanId: l.planId,
+        notes: l.notes,
+      },
+    });
+  }
+
   console.log("✅ Sample data seeded!");
   console.log("");
   console.log("Login accounts (password: admin123)");
