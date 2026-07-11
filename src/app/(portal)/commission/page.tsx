@@ -3,97 +3,44 @@ import Link from "next/link";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { DoctorCommissionTable } from "./DoctorCommissionTable";
 import { StaffCommissionTable }  from "./StaffCommissionTable";
 import { LocumPayoutTable, type LocumDoctorGroup } from "./LocumPayoutTable";
-import { Stethoscope, Users, Calculator, Banknote, FileCheck, Wallet, type LucideIcon } from "lucide-react";
+import { Users, Calculator, Banknote, FileCheck, Wallet, BadgeCheck, type LucideIcon } from "lucide-react";
 
 const RM = (n: number) =>
   new Intl.NumberFormat("ms-MY", { style: "currency", currency: "MYR" }).format(Number(n));
 
-function buildDoctorGroups(rows: any[]) {
-  const map = new Map<string, { doctorId: string; doctorName: string; rows: any[] }>();
-  for (const c of rows) {
-    if (!map.has(c.doctorId)) {
-      map.set(c.doctorId, {
-        doctorId:   c.doctorId,
-        doctorName: c.treatment?.doctor?.user?.name ?? "Unknown Doctor",
-        rows:       [],
-      });
-    }
-    map.get(c.doctorId)!.rows.push({
-      id:           c.id,
-      treatmentId:  c.treatmentId,
-      month:        (c as any).month,
-      status:       c.status,
-      txAmount:     Number(c.txAmount),
-      labFee:       Number(c.labFee),
-      doctorSplit:  Number(c.doctorSplit),
-      doctorRate:   Number(c.doctorRate),
-      finalPayout:  Number(c.finalPayout),
-      isTopUp:      c.isTopUp,
-      treatment:    c.treatment,
-      patientId:    c.treatment?.visit?.patient?.id ?? "",
-    });
-  }
-  return Array.from(map.values()).map(g => ({
-    ...g,
-    total:       g.rows.reduce((s: number, r: any) => s + r.finalPayout, 0),
-    allLockable: g.rows.every((r: any) => r.status === "DRAFT" || r.status === "PENDING_LOCK"),
-  }));
-}
-
 const TABS = [
-  { key: "doctor", label: "Doctor Commission", Icon: Stethoscope },
+  { key: "locum",  label: "Doctor Payout",     Icon: Wallet },
   { key: "staff",  label: "Staff Commission",  Icon: Users },
-  { key: "locum",  label: "Locum Payout",      Icon: Wallet },
 ] as const;
 
 export default async function CommissionPage({
   searchParams,
 }: {
-  searchParams: { month?: string; tab?: string; treatmentId?: string };
+  searchParams: { month?: string; tab?: string };
 }) {
   const session = await getServerSession(authOptions);
   const role    = (session?.user as any)?.role   as string;
   const userId  = (session?.user as any)?.id     as string;
 
   const month       = searchParams.month ?? new Date().toISOString().slice(0, 7);
-  const tabParam    = searchParams.tab ?? "doctor";
-  const tab         = (TABS.some(t => t.key === tabParam) ? tabParam : "doctor") as typeof TABS[number]["key"];
-  const treatmentId = searchParams.treatmentId ?? null;
+  const tabParam    = searchParams.tab ?? "locum";
+  const tab         = (TABS.some(t => t.key === tabParam) ? tabParam : "locum") as typeof TABS[number]["key"];
   const isDoctor  = role === "DOCTOR";
   const canLock   = ["SUPER_ADMIN", "FINANCE"].includes(role);
-  const canFlag   = ["SUPER_ADMIN", "FINANCE", "CLINIC_MANAGER"].includes(role);
   const canRun    = ["SUPER_ADMIN", "FINANCE", "CLINIC_MANAGER"].includes(role);
 
   const { getSelectedClinicId } = await import("@/lib/selected-clinic");
   const selectedClinicId = getSelectedClinicId() ?? "";
 
-  // DoctorProfile id for the signed-in doctor (needed for locum tab ownership check)
+  // DoctorProfile id for the signed-in doctor (needed for payout ownership check)
   const ownDoctorProfileId = isDoctor && userId
     ? await prisma.doctorProfile.findFirst({ where: { userId }, select: { id: true } })
         .then(r => r?.id ?? null).catch(() => null)
     : null;
 
-  const [doctorComms, staffComms, stmtRows, locumLines] = await Promise.all([
-    tab === "doctor"
-      ? prisma.doctorCommission.findMany({
-          where:   { month, ...(selectedClinicId ? { treatment: { visit: { clinicId: selectedClinicId } } } : {}), ...(isDoctor ? { doctorId: userId } : {}) },
-          include: {
-            treatment: {
-              include: {
-                treatmentType: { select: { name: true } },
-                visit:         { include: { patient: { select: { id: true, name: true } } } },
-                doctor:        { include: { user: { select: { name: true } } } },
-              },
-            },
-          },
-          orderBy: { createdAt: "desc" },
-          take: 200,
-        })
-      : Promise.resolve([]),
-
+  const [staffComms, stmtRows, locumLines] = await Promise.all([
     tab === "staff"
       ? prisma.staffCommission.findMany({
           where:   { month },
@@ -103,55 +50,50 @@ export default async function CommissionPage({
         })
       : Promise.resolve([]),
 
-    // Monthly statements for all doctors — used in the Doctor tab
-    tab === "doctor"
-      ? (prisma as any).locumReconciliationStatement.findMany({
-          where:  { month },
-          select: { id: true, doctorId: true, status: true, finalPayout: true },
-        }).catch(() => [])
-      : Promise.resolve([]),
+    // Monthly statements for all doctors
+    (prisma as any).locumReconciliationStatement.findMany({
+      where:  { month },
+      select: { id: true, doctorId: true, status: true, finalPayout: true },
+    }).catch(() => []),
 
-    // Locum payout lines — used in the Locum tab
-    tab === "locum"
-      ? (prisma as any).locumPayoutLine.findMany({
-          where: {
-            month,
-            ...(selectedClinicId ? { clinicId: selectedClinicId } : {}),
-            ...(isDoctor && ownDoctorProfileId ? { doctorProfileId: ownDoctorProfileId } : {}),
-          },
+    // Payout lines — every doctor's per-treatment earnings
+    (prisma as any).locumPayoutLine.findMany({
+      where: {
+        month,
+        ...(selectedClinicId ? { clinicId: selectedClinicId } : {}),
+        ...(isDoctor && ownDoctorProfileId ? { doctorProfileId: ownDoctorProfileId } : {}),
+      },
+      include: {
+        treatment: {
           include: {
-            treatment: {
-              include: {
-                treatmentType: { select: { code: true, name: true } },
-                visit:         { include: { patient: { select: { name: true, patientRef: true } } } },
-              },
-            },
-            treatmentPlan: {
-              select: { planRef: true, title: true, status: true, totalAmount: true, totalPaid: true },
-            },
-            doctorProfile: {
-              select: {
-                id:      true,
-                dayRate: true,
-                user:    { select: { name: true } },
-                engagements: {
-                  where:  { month },
-                  select: { sessionsWorked: true },
-                },
-              },
+            treatmentType: { select: { code: true, name: true } },
+            visit:         { include: { patient: { select: { name: true, patientRef: true } } } },
+          },
+        },
+        treatmentPlan: {
+          select: { planRef: true, title: true, status: true, totalAmount: true, totalPaid: true },
+        },
+        doctorProfile: {
+          select: {
+            id:      true,
+            dayRate: true,
+            user:    { select: { name: true } },
+            engagements: {
+              where:  { month },
+              select: { sessionsWorked: true },
             },
           },
-          orderBy: { createdAt: "asc" },
-        }).catch(() => [])
-      : Promise.resolve([]),
+        },
+      },
+      orderBy: { createdAt: "asc" },
+    }).catch(() => []),
   ]);
 
-  // Build a quick lookup: doctorProfileId → statement
-  const stmtByDoctor = new Map<string, any>(
-    (stmtRows as any[]).map((s: any) => [s.doctorId, s]),
-  );
+  // Statement lookup: DoctorProfile.id → { id, status }
+  const stmtByDoctor: Record<string, { id: string; status: string }> = {};
+  for (const s of stmtRows as any[]) stmtByDoctor[s.doctorId] = { id: s.id, status: s.status };
 
-  // Group locum lines by doctor
+  // Group payout lines by doctor
   function buildLocumGroups(lines: any[]): LocumDoctorGroup[] {
     const map = new Map<string, LocumDoctorGroup>();
     for (const l of lines) {
@@ -216,11 +158,11 @@ export default async function CommissionPage({
   const locumGroups = buildLocumGroups(locumLines as any[]);
 
   // Summary stats
-  const totalDoctor = doctorComms.reduce((s: number, c: any) => s + Number(c.finalPayout), 0);
-  const totalStaff  = staffComms.reduce((s: number,  c: any) => s + Number(c.proRatedComm), 0);
-
-  const lockedDr  = doctorComms.filter((c: any) => c.status === "LOCKED").length;
-  const draftDr   = doctorComms.filter((c: any) => c.status === "DRAFT").length;
+  const totalEntitled = locumGroups.reduce((s, g) => s + g.totalEntitled, 0);
+  const totalReleased = locumGroups.reduce((s, g) => s + g.totalReleased, 0);
+  const totalPending  = totalEntitled - totalReleased;
+  const totalLines    = locumGroups.reduce((s, g) => s + g.lines.length, 0);
+  const lockedStmts   = (stmtRows as any[]).filter((s: any) => s.status === "LOCKED").length;
 
   return (
     <div className="space-y-6">
@@ -229,7 +171,7 @@ export default async function CommissionPage({
         <div>
           <h1 className="page-title">Commission</h1>
           <p className="text-sm text-slate-500 mt-0.5">
-            Manage and approve doctor &amp; staff commission for{" "}
+            Track earnings, verify payouts and approve staff commission for{" "}
             <span className="font-medium text-slate-700">{month}</span>
           </p>
         </div>
@@ -247,9 +189,9 @@ export default async function CommissionPage({
 
       {/* ── Summary stat cards ──────────────────────────────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label="Doctor Commission" value={RM(totalDoctor)} sub={`${draftDr} draft · ${lockedDr} locked`} color="blue"   Icon={Banknote} />
-        <StatCard label="Monthly Statements" value={`${(stmtRows as any[]).length}`} sub={`${(stmtRows as any[]).filter((s:any) => s.status === "LOCKED").length} locked`} color="amber" Icon={FileCheck} />
-        <StatCard label="Staff Commission"  value={RM(totalStaff)}  sub={`${staffComms.length} records`} color="purple" Icon={Users} />
+        <StatCard label="Doctor Entitled" value={RM(totalEntitled)} sub={`${totalLines} treatment lines · ${locumGroups.length} doctors`} color="blue" Icon={Banknote} />
+        <StatCard label="Released" value={RM(totalReleased)} sub={totalPending > 0 ? `${RM(totalPending)} pending` : "all released"} color="purple" Icon={BadgeCheck} />
+        <StatCard label="Monthly Statements" value={`${(stmtRows as any[]).length}`} sub={`${lockedStmts} locked`} color="amber" Icon={FileCheck} />
         <div className="card p-5 flex flex-col justify-between">
           <div className="flex items-center gap-2">
             <div className="icon-box-sm bg-slate-100 text-slate-500"><Calculator size={16} /></div>
@@ -283,15 +225,13 @@ export default async function CommissionPage({
 
       {/* ── Tab content ─────────────────────────────────────────────────── */}
 
-      {tab === "doctor" && (
-        <DoctorCommissionTable
-          groups={buildDoctorGroups(doctorComms)}
+      {tab === "locum" && (
+        <LocumPayoutTable
+          groups={locumGroups}
           month={month}
-          canLock={canLock}
-          canFlag={canFlag}
-          canViewPatient={canFlag || isDoctor}
-          initialAdjustTreatmentId={treatmentId}
-          stmtByDoctor={Object.fromEntries(stmtByDoctor)}
+          role={role}
+          ownDoctorId={ownDoctorProfileId}
+          stmtByDoctor={stmtByDoctor}
         />
       )}
 
@@ -314,16 +254,6 @@ export default async function CommissionPage({
           canLock={canLock}
         />
       )}
-
-      {tab === "locum" && (
-        <LocumPayoutTable
-          groups={locumGroups}
-          month={month}
-          role={role}
-          ownDoctorId={ownDoctorProfileId}
-        />
-      )}
-
     </div>
   );
 }

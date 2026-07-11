@@ -61,6 +61,8 @@ interface Props {
   month:       string;
   role:        string;
   ownDoctorId: string | null; // DoctorProfile.id of the signed-in doctor, or null
+  /** Existing monthly statements keyed by DoctorProfile.id */
+  stmtByDoctor?: Record<string, { id: string; status: string }>;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -404,9 +406,29 @@ function LineRow({
 // ─── Doctor group card ────────────────────────────────────────────────────────
 
 function DoctorGroupCard({
-  group, role, ownDoctorId, onRefresh,
-}: { group: LocumDoctorGroup; role: string; ownDoctorId: string | null; onRefresh: () => void }) {
+  group, month, role, ownDoctorId, onRefresh, stmt,
+}: {
+  group: LocumDoctorGroup; month: string; role: string; ownDoctorId: string | null; onRefresh: () => void;
+  stmt?: { id: string; status: string };
+}) {
   const [open, setOpen] = useState(true);
+  const [stmtBusy, setStmtBusy] = useState(false);
+  const [stmtErr,  setStmtErr]  = useState("");
+  const router = useRouter();
+  const canManage = ["SUPER_ADMIN", "FINANCE", "CLINIC_MANAGER"].includes(role);
+
+  async function generateStatement(e: React.MouseEvent) {
+    e.stopPropagation();
+    setStmtBusy(true); setStmtErr("");
+    const res = await fetch("/api/commission/locum-statement", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ doctorId: group.doctorProfileId, month }),
+    });
+    setStmtBusy(false);
+    const d = await res.json();
+    if (!res.ok) { setStmtErr(d.error ?? "Failed"); return; }
+    router.push(`/commission/${d.statementId}`);
+  }
 
   const commissionWins = group.totalReleased >= group.basicPayFloor;
   const paidCount      = group.lines.filter(l => l.status === "PAID").length;
@@ -461,6 +483,25 @@ function DoctorGroupCard({
                   : <><Lock size={12} /> Floor applies</>}
               </div>
             )}
+            {canManage && (
+              stmt ? (
+                <button
+                  onClick={e => { e.stopPropagation(); router.push(`/commission/${stmt.id}`); }}
+                  className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium transition-colors whitespace-nowrap"
+                >
+                  View Statement{stmt.status === "LOCKED" ? " 🔒" : ""}
+                </button>
+              ) : (
+                <button
+                  onClick={generateStatement}
+                  disabled={stmtBusy}
+                  className="text-xs px-2.5 py-1.5 rounded-lg border border-blue-200 text-blue-700 hover:bg-blue-50 font-medium transition-colors disabled:opacity-40 whitespace-nowrap"
+                >
+                  {stmtBusy ? "Generating…" : "Generate Statement"}
+                </button>
+              )
+            )}
+            {stmtErr && <span className="text-xs text-red-600">{stmtErr}</span>}
           </div>
           {open ? <ChevronUp size={16} className="text-slate-400" /> : <ChevronDown size={16} className="text-slate-400" />}
         </div>
@@ -546,18 +587,44 @@ function EarningsSummary({ group }: { group: LocumDoctorGroup }) {
 
 // ─── Main export ──────────────────────────────────────────────────────────────
 
-export function LocumPayoutTable({ groups, month, role, ownDoctorId }: Props) {
+export function LocumPayoutTable({ groups, month, role, ownDoctorId, stmtByDoctor = {} }: Props) {
   const router = useRouter();
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [syncMsg,  setSyncMsg]  = useState("");
+  const canManage = ["SUPER_ADMIN", "FINANCE", "CLINIC_MANAGER"].includes(role);
 
   function refresh() { router.refresh(); }
+
+  async function syncLines() {
+    setSyncBusy(true); setSyncMsg("");
+    const res = await fetch("/api/locum-payout/sync", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ month }),
+    });
+    const d = await res.json();
+    setSyncBusy(false);
+    if (!res.ok) { setSyncMsg(d.error ?? "Sync failed"); return; }
+    setSyncMsg(d.created > 0 ? `${d.created} new line${d.created === 1 ? "" : "s"} created` : "Already up to date");
+    if (d.created > 0) refresh();
+  }
+
+  const syncButton = canManage && (
+    <div className="flex items-center gap-2">
+      <button onClick={syncLines} disabled={syncBusy} className="btn-secondary text-xs">
+        {syncBusy ? "Syncing…" : "Sync treatment lines"}
+      </button>
+      {syncMsg && <span className="text-xs text-slate-500">{syncMsg}</span>}
+    </div>
+  );
 
   if (groups.length === 0) {
     return (
       <div className="card">
         <div className="empty-state">
           <div className="empty-state-icon"><BadgeCheck size={24} /></div>
-          <p className="font-medium text-slate-700">No locum payout lines for {month}</p>
-          <p className="text-sm text-slate-400">Lines are created when a locum doctor completes a treatment</p>
+          <p className="font-medium text-slate-700">No payout lines for {month}</p>
+          <p className="text-sm text-slate-400 mb-3">Lines track each doctor&apos;s earnings per treatment</p>
+          {syncButton}
         </div>
       </div>
     );
@@ -591,8 +658,11 @@ export function LocumPayoutTable({ groups, month, role, ownDoctorId }: Props) {
           <BadgeCheck size={13} className="text-blue-500" />
           <span>Total released: <strong className="text-green-700">{RM(grandReleased)}</strong></span>
         </div>
-        <div className="ml-auto text-xs text-slate-400">
-          Steps: ① Counter ② Doctor ③ Lab ④ Complete ⑤ Release ⑥ Paid
+        <div className="ml-auto flex items-center gap-3">
+          {syncButton}
+          <span className="text-xs text-slate-400">
+            Steps: ① Counter ② Doctor ③ Lab ④ Complete ⑤ Release ⑥ Paid
+          </span>
         </div>
       </div>
 
@@ -600,9 +670,11 @@ export function LocumPayoutTable({ groups, month, role, ownDoctorId }: Props) {
         <DoctorGroupCard
           key={g.doctorProfileId}
           group={g}
+          month={month}
           role={role}
           ownDoctorId={ownDoctorId}
           onRefresh={refresh}
+          stmt={stmtByDoctor[g.doctorProfileId]}
         />
       ))}
     </div>

@@ -571,6 +571,9 @@ export interface CreatePayoutLineInput {
   treatmentPlanId?:         string;
   treatmentStageId?:        string;
   orthoPaymentTrackEnabled?: boolean;
+  /** Effective payout % of the net pool. Defaults to the treatment's doctorSplit.
+   *  For permanent doctors pass split × rate (e.g. 100% × 15% → 15). */
+  doctorSplit?:             number;
 }
 
 export async function createPayoutLine(
@@ -588,7 +591,7 @@ export async function createPayoutLine(
   const collectedAmount = Number(treatment.collectedAmount);
   const labFee        = Number(treatment.labFee);
   const sst           = Number(treatment.sst);
-  const doctorSplit   = Number(treatment.doctorSplit);
+  const doctorSplit   = input.doctorSplit ?? Number(treatment.doctorSplit);
 
   const netPool        = computeNetPool({ billedAmount, labFee, sst });
   const entitledAmount = computeEntitlement(netPool, doctorSplit);
