@@ -20,6 +20,7 @@ export type LocumLine = {
   labFee: number;
   labFeeConfirmed: boolean;
   sst: number;
+  doctorSplit: number;
   netPool: number;
   entitledAmount: number;
   releasedAmount: number;
@@ -48,6 +49,8 @@ export type LocumDoctorGroup = {
   dayRate:         number;
   sessionsWorked:  number;
   basicPayFloor:   number;
+  totalBilled:     number;
+  totalNetPool:    number;
   totalEntitled:   number;
   totalReleased:   number;
   lines:           LocumLine[];
@@ -331,12 +334,20 @@ function LineRow({
           <StepDots line={line} />
         </td>
 
-        {/* Entitled */}
+        {/* Net Pool — billed − lab − SST */}
+        <td className="px-4 py-3 tabular-nums text-sm text-slate-700 text-right">
+          {RM(line.netPool)}
+          <p className="text-[10px] text-slate-400 whitespace-nowrap">
+            {RM(line.billedAmount)}
+            {line.labFee > 0 && <> − lab {RM(line.labFee)}{!line.labFeeConfirmed ? " (est.)" : ""}</>}
+            {line.sst > 0 && <> − SST {RM(line.sst)}</>}
+          </p>
+        </td>
+
+        {/* Entitled — netPool × split% */}
         <td className="px-4 py-3 tabular-nums text-sm text-slate-700 text-right">
           {RM(line.entitledAmount)}
-          {line.labFee > 0 && (
-            <p className="text-[10px] text-slate-400">Lab: {RM(line.labFee)}{!line.labFeeConfirmed ? " (est.)" : ""}</p>
-          )}
+          <p className="text-[10px] text-slate-400">× {line.doctorSplit}%</p>
         </td>
 
         {/* Released */}
@@ -430,6 +441,10 @@ function DoctorGroupCard({
           {/* Floor vs earned comparison */}
           <div className="hidden sm:flex items-center gap-3 text-right">
             <div>
+              <p className="text-[10px] text-slate-400 uppercase tracking-wide">Net Pool</p>
+              <p className="text-sm font-semibold text-slate-600 tabular-nums">{RM(group.totalNetPool)}</p>
+            </div>
+            <div>
               <p className="text-[10px] text-slate-400 uppercase tracking-wide">Entitled</p>
               <p className="text-sm font-semibold text-slate-800 tabular-nums">{RM(group.totalEntitled)}</p>
             </div>
@@ -460,7 +475,7 @@ function DoctorGroupCard({
             <table className="w-full text-sm">
               <thead className="table-header">
                 <tr>
-                  {["Patient", "Treatment", "Category", "Status", "Steps ①②③④⑤⑥", "Entitled", "Released", "Action"].map(h => (
+                  {["Patient", "Treatment", "Category", "Status", "Steps ①②③④⑤⑥", "Net Pool", "Entitled", "Released", "Action"].map(h => (
                     <th key={h} className="px-4 py-2.5 text-left text-[10px] font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -479,14 +494,51 @@ function DoctorGroupCard({
               <tfoot>
                 <tr className="border-t-2 border-slate-200 bg-slate-50">
                   <td colSpan={5} className="px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase">Totals</td>
-                  <td className="px-4 py-2.5 tabular-nums text-sm font-semibold text-slate-800">{RM(group.totalEntitled)}</td>
-                  <td className="px-4 py-2.5 tabular-nums text-sm font-bold text-green-700">{RM(group.totalReleased)}</td>
+                  <td className="px-4 py-2.5 tabular-nums text-sm font-semibold text-slate-700 text-right">{RM(group.totalNetPool)}</td>
+                  <td className="px-4 py-2.5 tabular-nums text-sm font-semibold text-slate-800 text-right">{RM(group.totalEntitled)}</td>
+                  <td className="px-4 py-2.5 tabular-nums text-sm font-bold text-green-700 text-right">{RM(group.totalReleased)}</td>
                   <td />
                 </tr>
               </tfoot>
             </table>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Doctor earnings summary ──────────────────────────────────────────────────
+// Shown to the signed-in doctor: a month-to-date statement of their earnings
+// with the full calculation chain (billed → net pool → share → released).
+
+function EarningsSummary({ group }: { group: LocumDoctorGroup }) {
+  const pending  = group.totalEntitled - group.totalReleased;
+  const floorWin = group.basicPayFloor > group.totalReleased;
+  const cards = [
+    { label: "Billed",          value: RM(group.totalBilled),   sub: `${group.lines.length} treatments`,          cls: "text-slate-800" },
+    { label: "Net Pool",        value: RM(group.totalNetPool),  sub: "after lab fees & SST",                      cls: "text-slate-800" },
+    { label: "My Entitlement",  value: RM(group.totalEntitled), sub: "net pool × my split",                       cls: "text-blue-700" },
+    { label: "Released",        value: RM(group.totalReleased), sub: pending > 0 ? `${RM(pending)} pending` : "all released", cls: "text-green-700" },
+  ];
+  return (
+    <div className="card p-4">
+      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">My earnings so far this month</p>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {cards.map(c => (
+          <div key={c.label} className="rounded-xl bg-slate-50 px-3 py-2.5">
+            <p className="text-[10px] text-slate-400 uppercase tracking-wide">{c.label}</p>
+            <p className={`text-lg font-bold tabular-nums ${c.cls}`}>{c.value}</p>
+            <p className="text-[10px] text-slate-400 mt-0.5">{c.sub}</p>
+          </div>
+        ))}
+      </div>
+      {group.basicPayFloor > 0 && (
+        <p className="text-xs text-slate-500 mt-3 flex items-center gap-1.5">
+          {floorWin
+            ? <><Lock size={12} className="text-amber-500" /> Guaranteed floor {RM(group.basicPayFloor)} ({group.sessionsWorked} sessions × {RM(group.dayRate)}) currently applies — released commission is below it.</>
+            : <><TrendingUp size={12} className="text-green-500" /> Released commission exceeds your guaranteed floor of {RM(group.basicPayFloor)} ({group.sessionsWorked} sessions × {RM(group.dayRate)}).</>}
+        </p>
       )}
     </div>
   );
@@ -511,15 +563,27 @@ export function LocumPayoutTable({ groups, month, role, ownDoctorId }: Props) {
     );
   }
 
+  const grandNetPool  = groups.reduce((s, g) => s + g.totalNetPool, 0);
   const grandEntitled = groups.reduce((s, g) => s + g.totalEntitled, 0);
   const grandReleased = groups.reduce((s, g) => s + g.totalReleased, 0);
 
+  // A doctor viewing their own payouts gets a personal earnings statement
+  const ownGroup = role === "DOCTOR"
+    ? groups.find(g => g.doctorProfileId === ownDoctorId) ?? groups[0]
+    : null;
+
   return (
     <div className="space-y-4">
+      {ownGroup && <EarningsSummary group={ownGroup} />}
+
       {/* Summary bar */}
-      <div className="flex items-center gap-4 px-1">
+      <div className="flex items-center gap-4 px-1 flex-wrap">
         <div className="flex items-center gap-1.5 text-sm text-slate-500">
           <Zap size={13} className="text-green-500" />
+          <span>Net pool: <strong className="text-slate-800">{RM(grandNetPool)}</strong></span>
+        </div>
+        <div className="w-px h-4 bg-slate-200" />
+        <div className="flex items-center gap-1.5 text-sm text-slate-500">
           <span>Total entitled: <strong className="text-slate-800">{RM(grandEntitled)}</strong></span>
         </div>
         <div className="w-px h-4 bg-slate-200" />

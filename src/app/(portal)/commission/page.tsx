@@ -166,6 +166,8 @@ export default async function CommissionPage({
           dayRate,
           sessionsWorked,
           basicPayFloor:   sessionsWorked * dayRate,
+          totalBilled:     0,
+          totalNetPool:    0,
           totalEntitled:   0,
           totalReleased:   0,
           lines:           [],
@@ -180,6 +182,7 @@ export default async function CommissionPage({
         labFee:             Number(l.labFee),
         labFeeConfirmed:    l.labFeeConfirmed,
         sst:                Number(l.sst),
+        doctorSplit:        Number(l.doctorSplit),
         netPool:            Number(l.netPool),
         entitledAmount:     Number(l.entitledAmount),
         releasedAmount:     Number(l.releasedAmount),
@@ -202,6 +205,8 @@ export default async function CommissionPage({
           : null,
       };
       g.lines.push(line);
+      g.totalBilled   += line.billedAmount;
+      g.totalNetPool  += line.netPool;
       g.totalEntitled += line.entitledAmount;
       g.totalReleased += line.releasedAmount;
     }
