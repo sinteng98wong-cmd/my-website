@@ -7,7 +7,6 @@ import { DoctorCommissionTable } from "./DoctorCommissionTable";
 import { StaffCommissionTable }  from "./StaffCommissionTable";
 import { LocumPayoutTable, type LocumDoctorGroup } from "./LocumPayoutTable";
 import { Stethoscope, Users, Calculator, Banknote, FileCheck, Wallet, type LucideIcon } from "lucide-react";
-const CalcIcon = Calculator;
 
 const RM = (n: number) =>
   new Intl.NumberFormat("ms-MY", { style: "currency", currency: "MYR" }).format(Number(n));
@@ -48,7 +47,6 @@ const TABS = [
   { key: "doctor", label: "Doctor Commission", Icon: Stethoscope },
   { key: "staff",  label: "Staff Commission",  Icon: Users },
   { key: "locum",  label: "Locum Payout",      Icon: Wallet },
-  { key: "calc",   label: "Payroll Calculator", Icon: Calculator },
 ] as const;
 
 export default async function CommissionPage({
@@ -61,7 +59,8 @@ export default async function CommissionPage({
   const userId  = (session?.user as any)?.id     as string;
 
   const month       = searchParams.month ?? new Date().toISOString().slice(0, 7);
-  const tab         = (searchParams.tab ?? "doctor") as typeof TABS[number]["key"];
+  const tabParam    = searchParams.tab ?? "doctor";
+  const tab         = (TABS.some(t => t.key === tabParam) ? tabParam : "doctor") as typeof TABS[number]["key"];
   const treatmentId = searchParams.treatmentId ?? null;
   const isDoctor  = role === "DOCTOR";
   const canLock   = ["SUPER_ADMIN", "FINANCE"].includes(role);
@@ -248,11 +247,11 @@ export default async function CommissionPage({
         <StatCard label="Staff Commission"  value={RM(totalStaff)}  sub={`${staffComms.length} records`} color="purple" Icon={Users} />
         <div className="card p-5 flex flex-col justify-between">
           <div className="flex items-center gap-2">
-            <div className="icon-box-sm bg-slate-100 text-slate-500"><CalcIcon size={16} /></div>
-            <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Payroll Calc</p>
+            <div className="icon-box-sm bg-slate-100 text-slate-500"><Calculator size={16} /></div>
+            <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Doctor Payroll</p>
           </div>
-          <Link href={`/commission/payroll-calc?month=${month}`} className="mt-3 btn-primary text-xs justify-center">
-            Open Calculator
+          <Link href="/hr/doctor-payroll" className="mt-3 btn-primary text-xs justify-center">
+            Open Doctor Payroll
           </Link>
         </div>
       </div>
@@ -320,20 +319,6 @@ export default async function CommissionPage({
         />
       )}
 
-      {tab === "calc" && (
-        <div className="card p-10 flex flex-col items-center gap-4 text-center">
-          <div className="icon-box w-14 h-14 rounded-2xl bg-blue-50 text-blue-600"><Calculator size={28} /></div>
-          <div>
-            <p className="font-semibold text-slate-800">Payroll Calculator</p>
-            <p className="text-sm text-slate-500 mt-1 max-w-sm">
-              Calculate professional fee payouts for any doctor using the 3-type engine — then generate a monthly statement.
-            </p>
-          </div>
-          <Link href={`/commission/payroll-calc?month=${month}`} className="btn-primary">
-            Open Payroll Calculator
-          </Link>
-        </div>
-      )}
     </div>
   );
 }
