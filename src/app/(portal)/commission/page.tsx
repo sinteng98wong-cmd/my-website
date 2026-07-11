@@ -72,10 +72,10 @@ export default async function CommissionPage({
   const selectedClinicId = getSelectedClinicId() ?? "";
 
   // DoctorProfile id for the signed-in doctor (needed for locum tab ownership check)
-  const ownDoctorProfile = isDoctor
-    ? await prisma.doctorProfile.findFirst({ where: { userId: userId }, select: { id: true } })
+  const ownDoctorProfileId = isDoctor && userId
+    ? await prisma.doctorProfile.findFirst({ where: { userId }, select: { id: true } })
+        .then(r => r?.id ?? null).catch(() => null)
     : null;
-  const ownDoctorProfileId = ownDoctorProfile?.id ?? null;
 
   const [doctorComms, staffComms, stmtRows, locumLines] = await Promise.all([
     tab === "doctor"
@@ -109,7 +109,7 @@ export default async function CommissionPage({
       ? (prisma as any).locumReconciliationStatement.findMany({
           where:  { month },
           select: { id: true, doctorId: true, status: true, finalPayout: true },
-        })
+        }).catch(() => [])
       : Promise.resolve([]),
 
     // Locum payout lines — used in the Locum tab
@@ -143,7 +143,7 @@ export default async function CommissionPage({
             },
           },
           orderBy: { createdAt: "asc" },
-        })
+        }).catch(() => [])
       : Promise.resolve([]),
   ]);
 
