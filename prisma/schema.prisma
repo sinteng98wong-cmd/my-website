@@ -131,6 +131,7 @@ model Clinic {
   paymentMethodConfigs PaymentMethodConfig[]
   treatmentPlans       TreatmentPlan[]
   consentRequests      ConsentRequest[]
+  locumPayoutLines     LocumPayoutLine[]
 
   // Branch contact info
   address    String?
@@ -291,6 +292,7 @@ model DoctorProfile {
   engagements            LocumEngagement[]
   treatments             Treatment[]
   reconciliationStatements LocumReconciliationStatement[]
+  locumPayoutLines         LocumPayoutLine[]
 }
 
 model DoctorTreatmentRate {
@@ -627,6 +629,7 @@ model Treatment {
   labJobId        String?
   labJob          LabJob?           @relation(fields: [labJobId], references: [id])
   commissions     DoctorCommission[]
+  locumPayoutLines LocumPayoutLine[]
   createdAt       DateTime          @default(now())
   @@index([visitId])
   @@index([doctorId])
@@ -2421,6 +2424,7 @@ model TreatmentPlan {
   notes                  String?
   stages                 TreatmentStage[]
   payments               TreatmentPlanPayment[]
+  locumPayoutLines       LocumPayoutLine[]
   createdById            String?
   createdBy              User?               @relation("PlanCreator", fields: [createdById], references: [id])
   createdAt              DateTime            @default(now())
@@ -2469,4 +2473,92 @@ model TreatmentPlanPayment {
   notes        String?
 
   @@index([planId])
+}
+
+// ── Locum Payout Workflow ─────────────────────────────────────────────────────
+
+enum LocumPayoutStatus {
+  ENTITLED
+  LOCKED_PENDING_COMPLETION
+  PENDING_RELEASE
+  PAID
+  VOIDED
+}
+
+enum LocumTreatmentCategory {
+  ONE_OFF
+  MULTI_STAGE
+  ORTHO_BONDING
+  ORTHO_DEBONDING
+  ALIGNER
+}
+
+/// One payout line per treatment per locum doctor.
+/// Tracks the 6-step verification workflow and category-specific release rules.
+model LocumPayoutLine {
+  id              String                 @id @default(cuid())
+
+  treatmentId     String
+  treatment       Treatment              @relation(fields: [treatmentId], references: [id])
+  doctorProfileId String
+  doctorProfile   DoctorProfile          @relation(fields: [doctorProfileId], references: [id])
+  clinicId        String
+  clinic          Clinic                 @relation(fields: [clinicId], references: [id])
+  month           String                 // "YYYY-MM"
+
+  // Category determines release rules
+  category        LocumTreatmentCategory
+
+  // Financial snapshot (re-computed when lab fee is confirmed)
+  billedAmount    Decimal                @db.Decimal(10,2)
+  collectedAmount Decimal                @db.Decimal(10,2)
+  labFee          Decimal                @default(0) @db.Decimal(10,2)
+  labFeeConfirmed Boolean                @default(false) // true = physical invoice logged
+  sst             Decimal                @default(0) @db.Decimal(10,2)
+  doctorSplit     Decimal                @db.Decimal(5,2)
+  netPool         Decimal                @db.Decimal(10,2) // billedAmount − labFee − sst
+  entitledAmount  Decimal                @db.Decimal(10,2) // netPool × doctorSplit%
+  releasedAmount  Decimal                @default(0) @db.Decimal(10,2) // may be < entitledAmount (ortho/aligner partial)
+
+  // Ortho: some branches track release % against patient payment progress
+  orthoPaymentTrackEnabled Boolean       @default(false)
+
+  // Workflow status
+  status           LocumPayoutStatus     @default(ENTITLED)
+
+  // Override: manager force-released a LOCKED line early
+  forceReleasedBy  String?
+  forceReleasedAt  DateTime?
+
+  // Voided
+  voidedAt         DateTime?
+  voidedBy         String?
+  voidReason       String?
+
+  // ── 6-Step Verification Gates ──────────────────────────────────────────
+  counterVerifiedAt  DateTime?           // Step 1: counter reconciles collected cash
+  counterVerifiedBy  String?
+  doctorVerifiedAt   DateTime?           // Step 2: doctor verifies payment vs package price
+  doctorVerifiedBy   String?
+  labFeeLoggedAt     DateTime?           // Step 3: physical lab invoice cost confirmed
+  labFeeLoggedBy     String?
+  completionMarkedAt DateTime?           // Step 4: doctor marks case stage as done
+  completionMarkedBy String?
+  pendingReleaseAt   DateTime?           // Step 5: all conditions met → PENDING_RELEASE
+  paidAt             DateTime?           // Step 6: manager marks PAID
+  paidBy             String?
+
+  // Link to treatment plan for multi-stage / ortho / aligner release rules
+  treatmentPlanId  String?
+  treatmentPlan    TreatmentPlan?        @relation(fields: [treatmentPlanId], references: [id])
+  treatmentStageId String?               // specific stage that triggered this line
+
+  notes            String?
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+
+  @@unique([treatmentId, doctorProfileId])
+  @@index([doctorProfileId, month])
+  @@index([status])
+  @@index([clinicId, month])
 }
