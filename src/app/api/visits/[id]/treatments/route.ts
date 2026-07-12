@@ -6,16 +6,17 @@ import { z } from "zod";
 
 const AddSchema = z.object({
   treatmentTypeId: z.string().min(1),
-  doctorId:        z.string().min(1).optional(),
+  doctorId:        z.string().min(1).nullish(),
   billedAmount:    z.number().nonnegative(),
-  subType:         z.string().optional(), // material / variant, e.g. PFM, Valplast
-  hasLab:          z.boolean().optional(), // category requires lab work (vendor may be TBD)
+  subType:         z.string().nullish(), // material / variant, e.g. PFM, Valplast
+  hasLab:          z.boolean().nullish(), // category requires lab work (vendor may be TBD)
   labFee:          z.number().nonnegative().default(0),
-  // Lab job fields — vendor is optional; the doctor assigns it after assessing the case
-  labVendorId:     z.string().min(1).optional(),
-  labDescription:  z.string().optional(),
-  labExpectedDate: z.string().optional(),
-  labEstimatedFee: z.number().nonnegative().optional(),
+  // Lab job fields — vendor is optional; the doctor assigns it after assessing
+  // the case. All nullish: blank inputs may arrive as null.
+  labVendorId:     z.string().min(1).nullish(),
+  labDescription:  z.string().nullish(),
+  labExpectedDate: z.string().nullish(),
+  labEstimatedFee: z.number().nonnegative().nullish(),
 });
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
@@ -25,7 +26,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const body   = await req.json().catch(() => null);
   const parsed = AddSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: "Validation failed", issues: parsed.error.flatten().fieldErrors }, { status: 422 });
+    const fields = parsed.error.flatten().fieldErrors;
+    const detail = Object.entries(fields).map(([k, v]) => `${k}: ${(v ?? []).join(", ")}`).join("; ");
+    return NextResponse.json({ error: `Validation failed — ${detail}`, issues: fields }, { status: 422 });
   }
 
   const visit = await prisma.visit.findUnique({ where: { id: params.id } });
@@ -86,11 +89,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       data:  { labJobId: labJob.id },
     });
 
-    await createPayoutLineBestEffort(treatment.id, d.subType);
+    await createPayoutLineBestEffort(treatment.id, d.subType ?? undefined);
     return NextResponse.json({ treatment: { ...treatment, labJob }, labJob }, { status: 201 });
   }
 
-  await createPayoutLineBestEffort(treatment.id, d.subType);
+  await createPayoutLineBestEffort(treatment.id, d.subType ?? undefined);
   return NextResponse.json({ treatment }, { status: 201 });
 }
 

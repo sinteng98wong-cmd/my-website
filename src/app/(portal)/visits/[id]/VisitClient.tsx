@@ -157,8 +157,9 @@ export function VisitClient({
         labFee:          tx.hasLab ? (parseFloat(tx.labEstimatedFee) || 0) : 0,
         labVendorId:     tx.hasLab ? (tx.labVendorId || undefined) : undefined,
         labDescription:  tx.hasLab ? (tx.labDescription || [tx.subType, activeCategory?.types.find(t => t.id === tx.treatmentTypeId)?.name].filter(Boolean).join(" ")) : undefined,
-        labEstimatedFee: tx.hasLab ? parseFloat(tx.labEstimatedFee) : undefined,
-        labExpectedDate: tx.hasLab ? tx.labExpectedDate : undefined,
+        // Blank input parses to NaN, which JSON turns into null — omit instead
+        labEstimatedFee: tx.hasLab && isFinite(parseFloat(tx.labEstimatedFee)) ? parseFloat(tx.labEstimatedFee) : undefined,
+        labExpectedDate: tx.hasLab ? (tx.labExpectedDate || undefined) : undefined,
       }),
     });
     const data = await res.json();
