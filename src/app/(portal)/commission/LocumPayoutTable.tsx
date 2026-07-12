@@ -18,6 +18,8 @@ export type LocumLine = {
   status: string;
   /** Workflow bucket for the status-grouped view (computed server-side) */
   bucket: string;
+  /** % of the case earned by completed stages (may still be locked) */
+  accruedPct: number | null;
   billedAmount: number;
   labFee: number;
   labFeeConfirmed: boolean;
@@ -442,7 +444,7 @@ function LineRow({
           <p className="text-[10px] text-slate-400">× {line.doctorSplit}%</p>
         </td>
 
-        {/* Released — with % of case entitlement */}
+        {/* Released — with % of case entitlement / accrued-but-locked hint */}
         <td className="px-4 py-3 tabular-nums text-sm text-right">
           {line.releasedAmount > 0 ? (
             <>
@@ -454,7 +456,14 @@ function LineRow({
               )}
             </>
           ) : (
-            <span className="text-slate-300">—</span>
+            <>
+              <span className="text-slate-300">—</span>
+              {(line.accruedPct ?? 0) > 0 && line.status !== "PAID" && line.status !== "VOIDED" && (
+                <p className="text-[10px] text-amber-600 flex items-center justify-end gap-0.5">
+                  <Lock size={9} /> {Math.round(line.accruedPct!)}% of stages done
+                </p>
+              )}
+            </>
           )}
         </td>
 

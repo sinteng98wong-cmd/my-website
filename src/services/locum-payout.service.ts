@@ -83,16 +83,21 @@ export interface PayoutSchemeDef {
 }
 
 export const DEFAULT_SCHEMES: PayoutSchemeDef[] = [
+  // RCT / Denture / Crown-Bridge: stage percents ATTRIBUTE the entitlement per
+  // stage (progress tracking, multi-doctor attribution), but nothing is
+  // released until the whole case is COMPLETED — hence requiresCaseComplete
+  // on every stage. Untick "Case done" per stage in Settings › Payout Rules
+  // for clinics that release progressively.
   {
     name: "RCT",
     matchCodes: ["RCT", "ENDO", "ROOT", "PULP", "PULPOTOMY", "PULPECTOMY"],
     subTypes: ["Anterior", "Premolar", "Molar", "Retreatment"],
     paymentTracked: false,
     stages: [
-      { name: "Access Cavity",     percent: 15 },
-      { name: "Bio Prep",          percent: 35 },
-      { name: "Canal Seal",        percent: 35 },
-      { name: "Permanent Filling", percent: 15 },
+      { name: "Access Cavity",     percent: 15, requiresCaseComplete: true },
+      { name: "Bio Prep",          percent: 35, requiresCaseComplete: true },
+      { name: "Canal Seal",        percent: 35, requiresCaseComplete: true },
+      { name: "Permanent Filling", percent: 15, requiresCaseComplete: true },
     ],
   },
   {
@@ -101,10 +106,10 @@ export const DEFAULT_SCHEMES: PayoutSchemeDef[] = [
     subTypes: ["Acrylic", "Valplast", "Cobalt Chrome", "Flexible"],
     paymentTracked: false,
     stages: [
-      { name: "Impression", percent: 25 },
-      { name: "Bite",       percent: 25 },
-      { name: "Try-In",     percent: 25 },
-      { name: "Issue",      percent: 25 },
+      { name: "Impression", percent: 25, requiresCaseComplete: true },
+      { name: "Bite",       percent: 25, requiresCaseComplete: true },
+      { name: "Try-In",     percent: 25, requiresCaseComplete: true },
+      { name: "Issue",      percent: 25, requiresCaseComplete: true },
     ],
   },
   {
@@ -113,8 +118,8 @@ export const DEFAULT_SCHEMES: PayoutSchemeDef[] = [
     subTypes: ["PFM", "Zirconia", "Emax", "Full Metal", "Composite"],
     paymentTracked: false,
     stages: [
-      { name: "Prep",  percent: 65 },
-      { name: "Issue", percent: 35 },
+      { name: "Prep",  percent: 65, requiresCaseComplete: true },
+      { name: "Issue", percent: 35, requiresCaseComplete: true },
     ],
   },
   {
@@ -196,8 +201,11 @@ export interface StageReleaseContext {
 export type StageBlockType = "stage" | "lab" | "payment" | "case";
 
 export interface StageReleaseResult {
-  /** 0–100: % of the entitlement currently releasable */
+  /** 0–100: % of the entitlement currently releasable (payable now) */
   releasablePct: number;
+  /** 0–100: % of the entitlement EARNED by completed stages, even if still
+   *  locked behind case-completion / payment conditions */
+  accruedPct: number;
   breakdown: { name: string; percent: number; satisfied: boolean; blockedBy?: string; blockedType?: StageBlockType }[];
 }
 
@@ -217,9 +225,11 @@ export function computeStageRelease(
     const pct = ctx.totalPackage > 0
       ? Math.min(100, (ctx.totalCollected / ctx.totalPackage) * 100)
       : 0;
+    const rounded = Math.round(pct * 100) / 100;
     return {
-      releasablePct: Math.round(pct * 100) / 100,
-      breakdown: [{ name: "Patient payment progress", percent: Math.round(pct * 100) / 100, satisfied: pct > 0 }],
+      releasablePct: rounded,
+      accruedPct:    rounded,
+      breakdown: [{ name: "Patient payment progress", percent: rounded, satisfied: pct > 0 }],
     };
   }
 
@@ -227,6 +237,7 @@ export function computeStageRelease(
   const paidPct      = ctx.totalPackage > 0 ? (ctx.totalCollected / ctx.totalPackage) * 100 : 0;
 
   let releasablePct = 0;
+  let accruedPct    = 0;
   const breakdown: StageReleaseResult["breakdown"] = [];
 
   scheme.stages.forEach((rule, i) => {
@@ -252,10 +263,15 @@ export function computeStageRelease(
 
     const satisfied = !blockedBy;
     if (satisfied) releasablePct += rule.percent;
+    if (stageDone)  accruedPct    += rule.percent; // earned by work done, release conditions aside
     breakdown.push({ name: rule.name, percent: rule.percent, satisfied, blockedBy, blockedType });
   });
 
-  return { releasablePct: Math.min(100, releasablePct), breakdown };
+  return {
+    releasablePct: Math.min(100, releasablePct),
+    accruedPct:    Math.min(100, accruedPct),
+    breakdown,
+  };
 }
 
 // ─── Pure math helpers ───────────────────────────────────────────────────────

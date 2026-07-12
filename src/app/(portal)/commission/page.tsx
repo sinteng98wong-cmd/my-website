@@ -98,34 +98,42 @@ export default async function CommissionPage({
   const stmtByDoctor: Record<string, { id: string; status: string }> = {};
   for (const s of stmtRows as any[]) stmtByDoctor[s.doctorId] = { id: s.id, status: s.status };
 
-  // Classify each line into a workflow bucket for the status-grouped view
+  // Classify each line into a workflow bucket for the status-grouped view,
+  // and compute how much of the case the completed stages have earned so far
   const schemes = await getEffectiveSchemes(selectedClinicId || null).catch(() => []);
-  function bucketFor(l: any): string {
-    if (l.status === "VOIDED") return "voided";
-    if (l.status === "PAID")   return "paid";
-    if (l.status === "PENDING_RELEASE") return "ready_to_pay";
-    if (!l.counterVerifiedAt || !l.doctorVerifiedAt) return "pending_verification";
-    if (l.treatment.labJobId && !l.labFeeConfirmed)  return "pending_lab";
+  function classify(l: any): { bucket: string; accruedPct: number | null } {
+    if (l.status === "VOIDED") return { bucket: "voided", accruedPct: null };
+    if (l.status === "PAID")   return { bucket: "paid",   accruedPct: null };
 
     const scheme = matchScheme(schemes, l.treatment.treatmentType.code, l.subType ?? null);
+    let accruedPct: number | null = null;
+    let stage: ReturnType<typeof computeStageRelease> | null = null;
     if (l.treatmentPlan && scheme && scheme.stages.length > 0) {
-      const res = computeStageRelease(scheme, {
+      stage = computeStageRelease(scheme, {
         planStages:      (l.treatmentPlan.stages ?? []) as { status: string }[],
         planStatus:      l.treatmentPlan.status,
         totalPackage:    Number(l.treatmentPlan.totalAmount),
         totalCollected:  Number(l.treatmentPlan.totalPaid),
         labFeeConfirmed: !!l.labFeeConfirmed,
       });
-      const releasable = Number(l.entitledAmount) * res.releasablePct / 100;
-      if (releasable > Number(l.releasedAmount) + 0.005) return "ready_to_release";
-      if (scheme.paymentTracked) return "pending_payment";
-      const blockers = res.breakdown.filter(b => !b.satisfied);
-      if (blockers.some(b => b.blockedType === "payment")) return "pending_payment";
-      if (blockers.some(b => b.blockedType === "lab"))     return "pending_lab";
-      return "pending_completion";
+      accruedPct = stage.accruedPct;
     }
-    if (!l.completionMarkedAt) return "pending_completion";
-    return "ready_to_release";
+
+    if (l.status === "PENDING_RELEASE") return { bucket: "ready_to_pay", accruedPct };
+    if (!l.counterVerifiedAt || !l.doctorVerifiedAt) return { bucket: "pending_verification", accruedPct };
+    if (l.treatment.labJobId && !l.labFeeConfirmed)  return { bucket: "pending_lab", accruedPct };
+
+    if (stage && scheme) {
+      const releasable = Number(l.entitledAmount) * stage.releasablePct / 100;
+      if (releasable > Number(l.releasedAmount) + 0.005) return { bucket: "ready_to_release", accruedPct };
+      if (scheme.paymentTracked) return { bucket: "pending_payment", accruedPct };
+      const blockers = stage.breakdown.filter(b => !b.satisfied);
+      if (blockers.some(b => b.blockedType === "payment")) return { bucket: "pending_payment", accruedPct };
+      if (blockers.some(b => b.blockedType === "lab"))     return { bucket: "pending_lab", accruedPct };
+      return { bucket: "pending_completion", accruedPct };
+    }
+    if (!l.completionMarkedAt) return { bucket: "pending_completion", accruedPct };
+    return { bucket: "ready_to_release", accruedPct };
   }
 
   // Group payout lines by doctor
@@ -151,11 +159,13 @@ export default async function CommissionPage({
         });
       }
       const g = map.get(did)!;
+      const { bucket, accruedPct } = classify(l);
       const line = {
         id:                 l.id,
         category:           l.category,
         status:             l.status,
-        bucket:             bucketFor(l),
+        bucket,
+        accruedPct,
         billedAmount:       Number(l.billedAmount),
         labFee:             Number(l.labFee),
         labFeeConfirmed:    l.labFeeConfirmed,
