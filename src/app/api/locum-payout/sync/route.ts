@@ -48,10 +48,35 @@ export async function POST(req: NextRequest) {
       },
     },
     include: {
-      visit:  { select: { clinicId: true } },
+      visit:  { select: { clinicId: true, patientId: true } },
       doctor: { select: { id: true, defaultRate: true, treatmentRates: { select: { treatmentTypeId: true, rate: true } } } },
     },
   });
+
+  // Active treatment plans for these patients — used to auto-link staged cases
+  // (a plan matches when one of its stages was built from a template of the
+  // same treatment type)
+  const patientIds = Array.from(new Set(treatments.map((t: any) => t.visit.patientId)));
+  const activePlans = await prisma.treatmentPlan.findMany({
+    where: {
+      patientId: { in: patientIds },
+      status:    { in: ["ACCEPTED", "IN_PROGRESS"] as any },
+    },
+    select: {
+      id: true, patientId: true,
+      stages: { select: { template: { select: { treatmentTypeId: true } } } },
+    },
+  });
+  const plansByPatient = new Map<string, typeof activePlans>();
+  for (const plan of activePlans) {
+    const list = plansByPatient.get(plan.patientId) ?? [];
+    list.push(plan);
+    plansByPatient.set(plan.patientId, list);
+  }
+  function planFor(patientId: string, treatmentTypeId: string): string | undefined {
+    return plansByPatient.get(patientId)
+      ?.find(p => p.stages.some(s => s.template?.treatmentTypeId === treatmentTypeId))?.id;
+  }
 
   // Skip treatments that already have a payout line for this doctor
   const existing = await (prisma as any).locumPayoutLine.findMany({
@@ -77,6 +102,7 @@ export async function POST(req: NextRequest) {
         clinicId:        t.visit.clinicId,
         month,
         doctorSplit:     effectiveSplit,
+        treatmentPlanId: planFor(t.visit.patientId, t.treatmentTypeId),
       });
       created++;
     } catch (e: any) {

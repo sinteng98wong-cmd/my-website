@@ -886,6 +886,41 @@ export async function createPayoutLine(
   return line.id;
 }
 
+// ─── Auto-recheck lines when a plan progresses ───────────────────────────────
+
+/**
+ * Re-runs the release check for every payout line linked to a treatment plan.
+ * Called after a plan stage is completed or a patient payment is recorded, so
+ * newly unlocked stage percentages release without anyone clicking Check
+ * Release. Best-effort: lines that fail their guards (e.g. verification steps
+ * not done yet) are skipped silently — they'll release on the next manual
+ * check or monthly sweep once their steps are complete.
+ */
+export async function recheckLinesForPlan(
+  planId: string,
+  p: PrismaClient = defaultPrisma,
+): Promise<{ updated: string[] }> {
+  const lines = await (p as any).locumPayoutLine.findMany({
+    where: {
+      treatmentPlanId: planId,
+      status: { notIn: ["PAID", "VOIDED"] },
+      completionMarkedAt: { not: null }, // step 4 is a hard prerequisite for step 5
+    },
+    select: { id: true },
+  }).catch(() => [] as { id: string }[]);
+
+  const updated: string[] = [];
+  for (const { id } of lines as { id: string }[]) {
+    try {
+      const result = await step5_checkAndRelease(id, p);
+      if (result.eligible) updated.push(id);
+    } catch {
+      // guards not met or nothing new to release — fine, skip
+    }
+  }
+  return { updated };
+}
+
 // ─── Monthly DB reconciliation ────────────────────────────────────────────────
 
 export interface MonthlyReconciliationDbResult extends ReconciliationResult {

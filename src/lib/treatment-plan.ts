@@ -151,6 +151,14 @@ export async function completeStage(
     },
   });
 
+  // Stage progress may unlock payout percentages — re-check linked lines
+  try {
+    const { recheckLinesForPlan } = await import("@/services/locum-payout.service");
+    await recheckLinesForPlan(stage.planId);
+  } catch {
+    // payout recheck is best-effort; never block clinical stage completion
+  }
+
   return updatedStage;
 }
 
@@ -185,6 +193,15 @@ export async function recordPlanPayment(params: {
     where: { id: params.planId },
     data:  { totalPaid: Math.round(totalPaid * 100) / 100 },
   });
+
+  // Payment progress may cross a release threshold (e.g. aligner 70%) —
+  // re-check payout lines linked to this plan
+  try {
+    const { recheckLinesForPlan } = await import("@/services/locum-payout.service");
+    await recheckLinesForPlan(params.planId);
+  } catch {
+    // best-effort; never block payment recording
+  }
 
   return payment;
 }
