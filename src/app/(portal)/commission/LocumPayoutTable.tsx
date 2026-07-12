@@ -161,7 +161,10 @@ function nextAction(line: LocumLine, role: string, ownDoctorId: string | null) {
   if (!line.doctorVerifiedAt   && canDoctor)   return { action: "doctor_verify",   label: "Verify Payment",    style: "btn-outline" };
   if (line.treatment.labJobId && !line.labFeeConfirmed && canCounter)
                                                return { action: "log_lab_fee",     label: "Log Lab Fee",       style: "btn-outline text-amber-700 border-amber-300" };
-  if (!line.completionMarkedAt && canDoctor)   return { action: "mark_complete",   label: "Mark Complete",     style: "btn-outline" };
+  // Staged cases (linked to a plan) complete via the plan's stages —
+  // the per-line Mark Complete only applies to one-off / unplanned lines
+  if (!line.treatmentPlan && !line.completionMarkedAt && canDoctor)
+                                               return { action: "mark_complete",   label: "Mark Complete",     style: "btn-outline" };
   if (!line.pendingReleaseAt   && canManager)  return { action: "check_release",   label: "Check Release",     style: "btn-outline text-blue-700 border-blue-300" };
   if (line.status === "PENDING_RELEASE" && canFinance)
                                                return { action: "mark_paid",       label: "Mark Paid",         style: "btn-primary bg-green-600 hover:bg-green-700 focus:ring-green-500" };

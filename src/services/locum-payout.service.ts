@@ -463,9 +463,21 @@ export interface ReleaseCheckResult {
   releaseAmount: number;
 }
 
+/** Resolve the stage-release scheme managing a line, if any. */
+async function _schemeFor(
+  line: LineWithRelations,
+  p: PrismaClient,
+): Promise<PayoutSchemeDef | null> {
+  if (!line.treatmentPlan) return null;
+  const schemes = await getEffectiveSchemes(line.clinicId ?? null, p);
+  const scheme  = matchScheme(schemes, line.treatment.treatmentType.code, line.subType);
+  return scheme && scheme.stages.length > 0 ? scheme : null;
+}
+
 async function _checkReleaseEligibility(
   line: LineWithRelations,
   p: PrismaClient = defaultPrisma,
+  preScheme?: PayoutSchemeDef | null,
 ): Promise<ReleaseCheckResult> {
   const entitlement = Number(line.entitledAmount);
   const category    = line.category as LocumTreatmentCategory;
@@ -475,9 +487,8 @@ async function _checkReleaseEligibility(
   // treatment code / subtype, release is computed stage-by-stage from the
   // clinic's configured percentages.
   if (line.treatmentPlan) {
-    const schemes = await getEffectiveSchemes(line.clinicId ?? null, p);
-    const scheme  = matchScheme(schemes, line.treatment.treatmentType.code, line.subType);
-    if (scheme && scheme.stages.length > 0) {
+    const scheme = preScheme !== undefined ? preScheme : await _schemeFor(line, p);
+    if (scheme) {
       const result = computeStageRelease(scheme, {
         planStages:      line.treatmentPlan.stages as { status: string }[],
         planStatus:      line.treatmentPlan.status,
@@ -680,11 +691,18 @@ export async function step5_checkAndRelease(
 ): Promise<ReleaseCheckResult> {
   const line = await _fetchLine(lineId, p);
   assertNotTerminal(line);
-  assertStep4Done(line);
+
+  // Scheme-managed lines (linked plan + matching stage scheme) release
+  // stage-by-stage: the PLAN's stage completion is the completion signal, so
+  // only steps 1–3 gate the release. One-off / unplanned lines still require
+  // the doctor's per-line Mark Complete (step 4).
+  const scheme = await _schemeFor(line, p);
+  if (scheme) assertStep3Done(line);
+  else        assertStep4Done(line);
 
   // Re-checking a PENDING_RELEASE line is allowed: stage-based schemes release
   // progressively, so a later check can raise the releasable amount.
-  const result = await _checkReleaseEligibility(line, p);
+  const result = await _checkReleaseEligibility(line, p, scheme);
   if (!result.eligible) {
     if (line.status === "PENDING_RELEASE") {
       throw new WorkflowError(result.reason ?? "Nothing new to release", "INVALID_STATE");
@@ -904,10 +922,22 @@ export async function recheckLinesForPlan(
     where: {
       treatmentPlanId: planId,
       status: { notIn: ["PAID", "VOIDED"] },
-      completionMarkedAt: { not: null }, // step 4 is a hard prerequisite for step 5
     },
-    select: { id: true },
-  }).catch(() => [] as { id: string }[]);
+    select: { id: true, completionMarkedAt: true },
+  }).catch(() => [] as { id: string; completionMarkedAt: Date | null }[]);
+
+  // When the whole case just completed, stamp step 4 on its lines so the
+  // step dots reflect reality (the plan is the source of truth for staged cases)
+  const plan = await p.treatmentPlan.findUnique({ where: { id: planId }, select: { status: true } });
+  if (plan?.status === "COMPLETED") {
+    const unstamped = (lines as any[]).filter(l => !l.completionMarkedAt).map(l => l.id);
+    if (unstamped.length) {
+      await (p as any).locumPayoutLine.updateMany({
+        where: { id: { in: unstamped } },
+        data:  { completionMarkedAt: new Date() },
+      });
+    }
+  }
 
   const updated: string[] = [];
   for (const { id } of lines as { id: string }[]) {
@@ -1017,7 +1047,11 @@ export async function sweepMonthlyRelease(
       doctorProfileId,
       month:  monthStr,
       status: { notIn: ["PENDING_RELEASE", "PAID", "VOIDED"] },
-      completionMarkedAt: { not: null },
+      // Step 4 done, OR plan-linked (scheme-managed lines release per stage)
+      OR: [
+        { completionMarkedAt: { not: null } },
+        { treatmentPlanId:    { not: null } },
+      ],
     },
     select: { id: true },
   });
