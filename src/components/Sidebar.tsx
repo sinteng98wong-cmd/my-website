@@ -87,6 +87,7 @@ const NAV: NavEntry[] = [
       { key: "hr-payroll",        label: "Payroll",           href: "/hr/payroll",            managerOnly: true },
       { key: "hr-doctor-payroll", label: "Doctor Payroll",    href: "/hr/doctor-payroll",     managerOnly: true },
       { key: "hr-my-slips",       label: "My Payslips",       href: "/hr/payroll/my-slips"                      },
+      { key: "my-commission",     label: "My Commission",     href: "/commission",            doctorOnly: true  },
       { key: "hr-claims",         label: "Claims",            href: "/hr/claims"                                },
       { key: "hr-kpi",            label: "KPI",               href: "/hr/kpi"                                   },
       { key: "hr-appraisals",     label: "Appraisals",        href: "/hr/appraisals"                            },
