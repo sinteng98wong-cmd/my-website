@@ -52,7 +52,11 @@ export function DailySignoffClient({ date, treatments, total, signoff }: Props) 
       showToast(d.error ?? "Failed to sign off", false);
       return;
     }
-    showToast(`Signed off for ${date}`, true);
+    const d = await res.json();
+    const parts = [`Signed off for ${date}`];
+    if (d.verified > 0) parts.push(`${d.verified} payout line${d.verified === 1 ? "" : "s"} verified`);
+    if (d.skippedAwaitingCounter > 0) parts.push(`${d.skippedAwaitingCounter} awaiting counter cash verification`);
+    showToast(parts.join(" — "), true);
     router.refresh();
   }
 
@@ -168,6 +172,10 @@ export function DailySignoffClient({ date, treatments, total, signoff }: Props) 
             <p className="text-sm text-slate-500">
               You are confirming that the {treatments.length} treatment{treatments.length !== 1 ? "s" : ""} listed above
               ({RM(total)} billed, {RM(totalCommission)} commission) are correct.
+            </p>
+            <p className="text-xs text-slate-400">
+              Signing also completes your payment verification (step ②) on today&apos;s payout lines —
+              no need to verify them one by one in Doctor Payout.
             </p>
             <div className="flex justify-end gap-2 pt-2">
               <button onClick={() => setConfirm(false)} disabled={busy} className="px-4 py-2 text-sm text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-50">

@@ -107,10 +107,10 @@ export default async function LocumSlipPage({ params }: { params: { id: string }
     <div className="max-w-4xl mx-auto space-y-6 pb-12">
       {/* Back */}
       <Link
-        href={`/commission?tab=doctor&month=${stmt.month}`}
+        href={`/commission?tab=locum&month=${stmt.month}`}
         className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 transition-colors"
       >
-        ← Back to Doctor Commission
+        ← Back to Doctor Payout
       </Link>
 
       {/* ── Header card ─────────────────────────────────────────────────── */}

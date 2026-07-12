@@ -172,5 +172,36 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  return NextResponse.json(signoff);
+  // Signing off the day IS the doctor's payment verification — complete
+  // step ② on every payout line for the day's treatments. Lines whose cash
+  // the counter hasn't verified yet (step ① pending) are skipped and
+  // reported, so the doctor knows they'll verify once the counter is done.
+  // Best-effort: verification failures never block the sign-off itself.
+  let verified = 0;
+  let skippedAwaitingCounter = 0;
+  try {
+    const { step2_doctorVerify, WorkflowError } = await import("@/services/locum-payout.service");
+    const lines = await (prisma as any).locumPayoutLine.findMany({
+      where: {
+        treatmentId:      { in: treatments.map(t => t.id) },
+        doctorProfileId:  doctorProfile.id,
+        doctorVerifiedAt: null,
+        status:           { notIn: ["PAID", "VOIDED"] },
+      },
+      select: { id: true },
+    });
+    for (const { id } of lines as { id: string }[]) {
+      try {
+        await step2_doctorVerify(id, userId);
+        verified++;
+      } catch (e) {
+        if (e instanceof WorkflowError && e.code === "STEP1_INCOMPLETE") skippedAwaitingCounter++;
+        // any other per-line failure is skipped silently — sign-off stands
+      }
+    }
+  } catch (e) {
+    console.error("Daily sign-off payout verification failed:", e);
+  }
+
+  return NextResponse.json({ ...signoff, verified, skippedAwaitingCounter });
 }
