@@ -6,7 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { StaffCommissionTable }  from "./StaffCommissionTable";
 import { LocumPayoutTable, type LocumDoctorGroup } from "./LocumPayoutTable";
 import { DailySignoffPanel, type DayRow } from "./DailySignoffPanel";
-import { getEffectiveSchemes, matchScheme, computeStageRelease } from "@/services/locum-payout.service";
+import { getEffectiveSchemes, matchScheme, computeStageRelease, isScanCode } from "@/services/locum-payout.service";
 import { Users, Calculator, Banknote, FileCheck, Wallet, BadgeCheck, type LucideIcon } from "lucide-react";
 
 const RM = (n: number) =>
@@ -227,49 +227,158 @@ export default async function CommissionPage({
   let dayRows: DayRow[] = [];
   let signedAt: string | null = null;
   let signoffDoctorName: string | null = null;
+  let signoffDoctorRate = 0;
   if (tab === "locum" && signoffDoctorId) {
     const dayStart = new Date(day);
     const dayEnd   = new Date(dayStart);
     dayEnd.setDate(dayEnd.getDate() + 1);
+    const inDay = (d: Date | string | null | undefined) => {
+      if (!d) return false;
+      const t = new Date(d).getTime();
+      return t >= dayStart.getTime() && t < dayEnd.getTime();
+    };
 
-    const [dayTreatments, signoffRow] = await Promise.all([
+    const lineSelect = {
+      id: true, status: true, category: true, doctorVerifiedAt: true, subType: true,
+      labFee: true, labFeeConfirmed: true, treatmentPlanId: true,
+    };
+
+    const [profile, sameDayTreatments, stageLines, signoffRow] = await Promise.all([
+      prisma.doctorProfile.findUnique({ where: { id: signoffDoctorId }, select: { defaultRate: true } }),
+
+      // A. Treatments recorded at visits that day
       prisma.treatment.findMany({
         where: {
           doctorId: signoffDoctorId,
           visit: { visitDate: { gte: dayStart, lt: dayEnd }, deletedAt: null },
         },
         include: {
-          treatmentType: { select: { name: true } },
-          visit: { include: { patient: { select: { name: true, patientRef: true } } } },
-          locumPayoutLines: {
-            where:  { doctorProfileId: signoffDoctorId },
-            select: { status: true, entitledAmount: true, doctorVerifiedAt: true, subType: true },
-          },
+          treatmentType: { select: { code: true, name: true } },
+          visit: { select: { visitDate: true, patient: { select: { name: true, patientRef: true } } } },
+          locumPayoutLines: { where: { doctorProfileId: signoffDoctorId }, select: lineSelect },
         },
         orderBy: { createdAt: "asc" },
       }),
+
+      // B. The doctor's staged cases with a stage completed that day
+      //    (the case itself may have been billed on an earlier visit)
+      (prisma as any).locumPayoutLine.findMany({
+        where: {
+          doctorProfileId: signoffDoctorId,
+          treatmentPlanId: { not: null },
+          treatmentPlan:   { stages: { some: { completedAt: { gte: dayStart, lt: dayEnd } } } },
+        },
+        select: {
+          ...lineSelect,
+          treatment: {
+            select: {
+              id: true, billedAmount: true, collectedAmount: true, labFee: true,
+              treatmentType: { select: { code: true, name: true } },
+              visit: { select: { visitDate: true, patient: { select: { name: true, patientRef: true } } } },
+            },
+          },
+          treatmentPlan: {
+            select: { id: true, stages: { select: { name: true, order: true, completedAt: true }, orderBy: { order: "asc" } } },
+          },
+        },
+      }).catch(() => []),
+
       (prisma as any).doctorDailySignoff.findFirst({
         where: { doctorId: signoffDoctorId, date: dayStart },
         select: { signedAt: true },
       }).catch(() => null),
     ]);
 
-    dayRows = (dayTreatments as any[]).map(t => {
+    signoffDoctorRate = Number(profile?.defaultRate ?? 0);
+
+    // Patient installments recorded that day, per plan
+    const planIds = Array.from(new Set([
+      ...(stageLines as any[]).map(l => l.treatmentPlanId),
+      ...(sameDayTreatments as any[]).flatMap(t => t.locumPayoutLines.map((l: any) => l.treatmentPlanId)),
+    ].filter(Boolean)));
+    const planPayments = planIds.length
+      ? await prisma.treatmentPlanPayment.groupBy({
+          by: ["planId"],
+          where: { planId: { in: planIds as string[] }, paidAt: { gte: dayStart, lt: dayEnd } },
+          _sum:  { amount: true },
+        }).catch(() => [])
+      : [];
+    const paidByPlan = new Map(planPayments.map((p: any) => [p.planId, Number(p._sum.amount ?? 0)]));
+
+    // Stage weightage gained that day: plan stage i ↔ scheme stage i (by order)
+    function weightageToday(line: any, planStages: { name: string; completedAt: Date | null }[], code: string) {
+      const scheme = matchScheme(schemes, code, line?.subType ?? null);
+      const stagesDone: string[] = [];
+      let pct = 0;
+      planStages.forEach((s, i) => {
+        if (inDay(s.completedAt)) {
+          stagesDone.push(s.name);
+          pct += scheme?.stages[i]?.percent ?? 0;
+        }
+      });
+      return { stagesDone, pct };
+    }
+
+    const rowsMap = new Map<string, DayRow>();
+
+    // B rows first (carry stage weightage); A rows fill in the rest
+    for (const l of stageLines as any[]) {
+      const t = l.treatment;
+      const { stagesDone, pct } = weightageToday(l, l.treatmentPlan.stages, t.treatmentType.code);
+      const billed = Number(t.billedAmount);
+      const labFee = Number(l.labFee);
+      const net    = Math.max(0, billed - labFee);
+      rowsMap.set(l.id, {
+        id:             l.id,
+        patientName:    t.visit.patient.name,
+        patientRef:     t.visit.patient.patientRef,
+        treatmentName:  t.treatmentType.name,
+        subType:        l.subType ?? null,
+        section:        "progressive",
+        stagesDone,
+        weightagePct:   pct,
+        paidToday:      (inDay(t.visit.visitDate) ? Number(t.collectedAmount) : 0) + (paidByPlan.get(l.treatmentPlanId) ?? 0),
+        billed,
+        labFee,
+        labFeeConfirmed: !!l.labFeeConfirmed,
+        net,
+        gained:         Math.round(net * pct) / 100,
+        lineStatus:     l.status,
+        doctorVerified: !!l.doctorVerifiedAt,
+      });
+    }
+
+    for (const t of sameDayTreatments as any[]) {
       const line = t.locumPayoutLines[0] ?? null;
-      return {
-        id:             t.id,
+      if (line && rowsMap.has(line.id)) continue; // already covered by B
+      const code    = t.treatmentType.code;
+      const scan    = isScanCode(code);
+      const staged  = !!line && line.category !== "ONE_OFF" && !scan;
+      const billed  = Number(t.billedAmount);
+      const labFee  = Number(line?.labFee ?? t.labFee);
+      const net     = Math.max(0, billed - labFee);
+      const planPaid = line?.treatmentPlanId ? (paidByPlan.get(line.treatmentPlanId) ?? 0) : 0;
+      rowsMap.set(line?.id ?? `t-${t.id}`, {
+        id:             line?.id ?? `t-${t.id}`,
         patientName:    t.visit.patient.name,
         patientRef:     t.visit.patient.patientRef,
         treatmentName:  t.treatmentType.name,
         subType:        line?.subType ?? null,
-        billed:         Number(t.billedAmount),
-        collected:      Number(t.collectedAmount),
-        labFee:         Number(t.labFee),
-        entitled:       line ? Number(line.entitledAmount) : null,
+        section:        scan ? "scan" : staged ? "progressive" : "oneoff",
+        stagesDone:     [],
+        weightagePct:   staged ? 0 : 100,
+        paidToday:      Number(t.collectedAmount) + planPaid,
+        billed,
+        labFee,
+        labFeeConfirmed: line ? !!line.labFeeConfirmed : null,
+        net,
+        gained:         scan ? billed : staged ? 0 : net, // scans flat; staged earns via stages
         lineStatus:     line?.status ?? null,
         doctorVerified: !!line?.doctorVerifiedAt,
-      };
-    });
+      });
+    }
+
+    dayRows = Array.from(rowsMap.values());
     signedAt = signoffRow?.signedAt?.toISOString() ?? null;
     signoffDoctorName = canPickDoctor
       ? (signoffDoctors.find(d => d.id === signoffDoctorId)?.name ?? null)
@@ -356,6 +465,7 @@ export default async function CommissionPage({
               doctors={signoffDoctors}
               selectedDoctorId={signoffDoctorId}
               doctorName={signoffDoctorName}
+              doctorRate={signoffDoctorRate}
               rows={dayRows}
               signedAt={signedAt}
             />

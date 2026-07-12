@@ -28,10 +28,15 @@ export type DayRow = {
   patientRef:    string;
   treatmentName: string;
   subType:       string | null;
+  section:       "oneoff" | "progressive" | "scan";
+  stagesDone:    string[];        // plan stages completed that day
+  weightagePct:  number;          // Σ scheme % of those stages (one-off: 100)
+  paidToday:     number;          // patient payments that day (visit + plan installments)
   billed:        number;
-  collected:     number;  // patient paid
   labFee:        number;
-  entitled:      number | null;  // from the payout line, if created
+  labFeeConfirmed: boolean | null; // null = no payout line yet
+  net:           number;          // billed − lab fee
+  gained:        number;          // one-off: net · progressive: net × weightage% · scan: billed (flat)
   lineStatus:    string | null;
   doctorVerified: boolean;
 };
@@ -45,18 +50,86 @@ interface Props {
   doctors:          { id: string; name: string }[];
   selectedDoctorId: string;
   doctorName:       string | null;
+  doctorRate:       number; // % applied on (one-off + progressive) total
   rows:             DayRow[];
   signedAt:         string | null; // ISO
 }
 
+// ─── Shared cells ─────────────────────────────────────────────────────────────
+
+function PatientCell({ r }: { r: DayRow }) {
+  return (
+    <td className="px-4 py-2.5">
+      <p className="font-medium text-slate-900 text-sm">{r.patientName}</p>
+      <p className="text-xs text-slate-400 font-mono">{r.patientRef}</p>
+    </td>
+  );
+}
+
+function TreatmentCell({ r }: { r: DayRow }) {
+  return (
+    <td className="px-4 py-2.5">
+      <p className="text-slate-700 text-sm">{r.treatmentName}</p>
+      <span className="flex items-center gap-1.5 flex-wrap mt-0.5">
+        {r.subType && <span className="badge-slate text-[10px]">{r.subType}</span>}
+        {r.lineStatus ? (
+          <>
+            <span className={`${STATUS_BADGE[r.lineStatus] ?? "badge-slate"} text-[10px]`}>{STATUS_LABEL[r.lineStatus] ?? r.lineStatus}</span>
+            {r.doctorVerified && <CheckCircle2 size={11} className="text-green-500" />}
+          </>
+        ) : (
+          <span className="text-[10px] text-slate-300">no payout line</span>
+        )}
+      </span>
+    </td>
+  );
+}
+
+function PaidCell({ r }: { r: DayRow }) {
+  return (
+    <td className="px-4 py-2.5 tabular-nums text-sm">
+      {r.paidToday > 0
+        ? <span className="text-green-700">{RM(r.paidToday)}</span>
+        : <span className="text-slate-300">—</span>}
+    </td>
+  );
+}
+
+function LabFeeCell({ r }: { r: DayRow }) {
+  if (r.labFee <= 0) return <td className="px-4 py-2.5 text-slate-300 text-sm">—</td>;
+  return (
+    <td className="px-4 py-2.5 tabular-nums text-sm">
+      {RM(r.labFee)}
+      {r.labFeeConfirmed
+        ? <p className="text-[10px] text-green-600 font-medium">✓ Confirmed</p>
+        : <p className="text-[10px] text-amber-600">(est.)</p>}
+    </td>
+  );
+}
+
+const TH = ({ children }: { children: React.ReactNode }) => (
+  <th className="px-4 py-2 text-left text-[10px] font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">{children}</th>
+);
+
+function SectionTitle({ n, label, hint }: { n: string; label: string; hint: string }) {
+  return (
+    <div className="px-4 pt-4 pb-1.5 flex items-baseline gap-2">
+      <p className="text-xs font-bold text-slate-700 uppercase tracking-wide">{n} {label}</p>
+      <p className="text-[11px] text-slate-400">{hint}</p>
+    </div>
+  );
+}
+
+// ─── Main panel ───────────────────────────────────────────────────────────────
+
 /**
- * Daily sign-off, embedded in the Doctor Payout tab. The doctor picks a day,
- * reviews the treatments they made (billed vs patient paid vs entitlement),
- * and verifies the whole day with one signature — which also completes
- * step ② (doctor verify) on every payout line of that day.
+ * Daily commission slip, embedded in the Doctor Payout tab.
+ * ① One-Off (net, full weightage) + ② Progressive (stage weightage gained
+ * that day) — their total × the doctor's % — plus ③ Scans at flat rate.
+ * Signing verifies the whole day (step ② on every payout line).
  */
 export function DailySignoffPanel({
-  day, month, view, isDoctor, canPickDoctor, doctors, selectedDoctorId, doctorName, rows, signedAt,
+  day, month, view, isDoctor, canPickDoctor, doctors, selectedDoctorId, doctorName, doctorRate, rows, signedAt,
 }: Props) {
   const router = useRouter();
   const [open,  setOpen]  = useState(true);
@@ -65,11 +138,18 @@ export function DailySignoffPanel({
   const [err,   setErr]   = useState("");
   const [confirm, setConfirm] = useState(false);
 
+  const oneOff      = rows.filter(r => r.section === "oneoff");
+  const progressive = rows.filter(r => r.section === "progressive");
+  const scans       = rows.filter(r => r.section === "scan");
+
+  const sub1 = oneOff.reduce((s, r) => s + r.gained, 0);
+  const sub2 = progressive.reduce((s, r) => s + r.gained, 0);
+  const sub3 = scans.reduce((s, r) => s + r.gained, 0);
+  const professionalFee = Math.round((sub1 + sub2) * doctorRate) / 100;
+  const entitledDay     = Math.round((professionalFee + sub3) * 100) / 100;
+
   const totalBilled    = rows.reduce((s, r) => s + r.billed, 0);
-  const totalCollected = rows.reduce((s, r) => s + r.collected, 0);
-  const totalEntitled  = rows.reduce((s, r) => s + (r.entitled ?? 0), 0);
-  const outstanding    = Math.round((totalBilled - totalCollected) * 100) / 100;
-  const allVerified    = rows.length > 0 && rows.every(r => r.doctorVerified || r.lineStatus === null);
+  const totalCollected = rows.reduce((s, r) => s + r.paidToday, 0);
 
   async function sign() {
     setConfirm(false); setBusy(true); setErr(""); setMsg("");
@@ -122,8 +202,8 @@ export function DailySignoffPanel({
               <p className="text-sm font-semibold text-green-700 tabular-nums">{RM(totalCollected)}</p>
             </div>
             <div>
-              <p className="text-[10px] text-slate-400 uppercase tracking-wide">Entitled</p>
-              <p className="text-sm font-semibold text-blue-700 tabular-nums">{RM(totalEntitled)}</p>
+              <p className="text-[10px] text-slate-400 uppercase tracking-wide">Entitled (Day)</p>
+              <p className="text-sm font-semibold text-blue-700 tabular-nums">{RM(entitledDay)}</p>
             </div>
           </div>
           {open ? <ChevronUp size={16} className="text-slate-400" /> : <ChevronDown size={16} className="text-slate-400" />}
@@ -153,58 +233,130 @@ export function DailySignoffPanel({
           {rows.length === 0 ? (
             <p className="px-5 py-6 text-center text-sm text-slate-400">No treatments on {day}</p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="table-header">
-                  <tr>
-                    {["Patient", "Treatment", "Billed", "Patient Paid", "Lab Fee", "Entitled", "Payout Status"].map(h => (
-                      <th key={h} className="px-4 py-2.5 text-left text-[10px] font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map(r => (
-                    <tr key={r.id} className="table-row">
-                      <td className="px-4 py-2.5">
-                        <p className="font-medium text-slate-900 text-sm">{r.patientName}</p>
-                        <p className="text-xs text-slate-400 font-mono">{r.patientRef}</p>
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <p className="text-slate-700">{r.treatmentName}</p>
-                        {r.subType && <span className="badge-slate text-[10px]">{r.subType}</span>}
-                      </td>
-                      <td className="px-4 py-2.5 tabular-nums">{RM(r.billed)}</td>
-                      <td className="px-4 py-2.5 tabular-nums">
-                        <span className={r.collected >= r.billed ? "text-green-700" : "text-amber-600"}>{RM(r.collected)}</span>
-                      </td>
-                      <td className="px-4 py-2.5 tabular-nums text-slate-500">{r.labFee > 0 ? RM(r.labFee) : "—"}</td>
-                      <td className="px-4 py-2.5 tabular-nums">{r.entitled !== null ? RM(r.entitled) : "—"}</td>
-                      <td className="px-4 py-2.5">
-                        {r.lineStatus ? (
-                          <span className="flex items-center gap-1.5">
-                            <span className={`${STATUS_BADGE[r.lineStatus] ?? "badge-slate"} text-[10px]`}>{STATUS_LABEL[r.lineStatus] ?? r.lineStatus}</span>
-                            {r.doctorVerified && <CheckCircle2 size={12} className="text-green-500" />}
-                          </span>
-                        ) : <span className="text-xs text-slate-300">no payout line</span>}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <tr className="border-t-2 border-slate-200 bg-slate-50">
-                    <td colSpan={2} className="px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase">Day Totals</td>
-                    <td className="px-4 py-2.5 tabular-nums font-semibold text-slate-800">{RM(totalBilled)}</td>
-                    <td className="px-4 py-2.5 tabular-nums font-bold text-green-700">
-                      {RM(totalCollected)}
-                      {outstanding > 0 && <p className="text-[10px] font-normal text-amber-600">{RM(outstanding)} outstanding</p>}
-                    </td>
-                    <td />
-                    <td className="px-4 py-2.5 tabular-nums font-semibold text-blue-700">{RM(totalEntitled)}</td>
-                    <td />
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
+            <>
+              {/* ── ① One-Off ─────────────────────────────────────────── */}
+              {oneOff.length > 0 && (
+                <>
+                  <SectionTitle n="①" label="One-Off" hint="full value counts toward the doctor's share" />
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="table-header">
+                        <tr><TH>Patient</TH><TH>Treatment</TH><TH>Paid Today</TH><TH>Billed</TH><TH>Lab Fee</TH><TH>Net</TH></tr>
+                      </thead>
+                      <tbody>
+                        {oneOff.map(r => (
+                          <tr key={r.id} className="table-row">
+                            <PatientCell r={r} />
+                            <TreatmentCell r={r} />
+                            <PaidCell r={r} />
+                            <td className="px-4 py-2.5 tabular-nums text-sm">{RM(r.billed)}</td>
+                            <LabFeeCell r={r} />
+                            <td className="px-4 py-2.5 tabular-nums text-sm font-medium">{RM(r.net)}</td>
+                          </tr>
+                        ))}
+                        <tr className="bg-slate-50 border-t border-slate-200">
+                          <td colSpan={5} className="px-4 py-2 text-[10px] font-semibold text-slate-500 uppercase text-right">Subtotal ①</td>
+                          <td className="px-4 py-2 tabular-nums text-sm font-semibold text-slate-800">{RM(sub1)}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+
+              {/* ── ② Progressive ─────────────────────────────────────── */}
+              {progressive.length > 0 && (
+                <>
+                  <SectionTitle n="②" label="Progressive" hint="staged cases earn by the weightage of stages done today" />
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="table-header">
+                        <tr><TH>Patient</TH><TH>Treatment</TH><TH>Stage Done</TH><TH>Paid Today</TH><TH>Billed</TH><TH>Lab Fee</TH><TH>Net</TH><TH>Weightage</TH><TH>Gained</TH></tr>
+                      </thead>
+                      <tbody>
+                        {progressive.map(r => (
+                          <tr key={r.id} className="table-row">
+                            <PatientCell r={r} />
+                            <TreatmentCell r={r} />
+                            <td className="px-4 py-2.5 text-sm">
+                              {r.stagesDone.length > 0
+                                ? r.stagesDone.map(s => <p key={s} className="text-slate-700">{s}</p>)
+                                : <span className="text-slate-300">—</span>}
+                            </td>
+                            <PaidCell r={r} />
+                            <td className="px-4 py-2.5 tabular-nums text-sm">{RM(r.billed)}</td>
+                            <LabFeeCell r={r} />
+                            <td className="px-4 py-2.5 tabular-nums text-sm">{RM(r.net)}</td>
+                            <td className="px-4 py-2.5 tabular-nums text-sm font-medium text-blue-700">{r.weightagePct > 0 ? `${r.weightagePct}%` : "—"}</td>
+                            <td className="px-4 py-2.5 tabular-nums text-sm font-medium">{RM(r.gained)}</td>
+                          </tr>
+                        ))}
+                        <tr className="bg-slate-50 border-t border-slate-200">
+                          <td colSpan={8} className="px-4 py-2 text-[10px] font-semibold text-slate-500 uppercase text-right">Subtotal ②</td>
+                          <td className="px-4 py-2 tabular-nums text-sm font-semibold text-slate-800">{RM(sub2)}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+
+              {/* ── ③ Scans (flat) ────────────────────────────────────── */}
+              {scans.length > 0 && (
+                <>
+                  <SectionTitle n="③" label="Scans" hint="flat rate — full value, no doctor percentage" />
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="table-header">
+                        <tr><TH>Patient</TH><TH>Treatment</TH><TH>Paid Today</TH><TH>Billed</TH><TH>Flat Commission</TH></tr>
+                      </thead>
+                      <tbody>
+                        {scans.map(r => (
+                          <tr key={r.id} className="table-row">
+                            <PatientCell r={r} />
+                            <TreatmentCell r={r} />
+                            <PaidCell r={r} />
+                            <td className="px-4 py-2.5 tabular-nums text-sm">{RM(r.billed)}</td>
+                            <td className="px-4 py-2.5 tabular-nums text-sm font-medium">{RM(r.gained)}</td>
+                          </tr>
+                        ))}
+                        <tr className="bg-slate-50 border-t border-slate-200">
+                          <td colSpan={4} className="px-4 py-2 text-[10px] font-semibold text-slate-500 uppercase text-right">Subtotal ③</td>
+                          <td className="px-4 py-2 tabular-nums text-sm font-semibold text-slate-800">{RM(sub3)}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+
+              {/* ── Totals: (① + ②) × doctor % + ③ flat ───────────────── */}
+              <div className="mx-4 my-4 rounded-xl bg-slate-50 border border-slate-200 p-4">
+                <div className="space-y-1.5 text-sm max-w-md ml-auto">
+                  <div className="flex justify-between text-slate-600">
+                    <span>① One-Off + ② Progressive</span>
+                    <span className="tabular-nums">{RM(sub1 + sub2)}</span>
+                  </div>
+                  <div className="flex justify-between text-slate-600">
+                    <span>× Doctor&apos;s share ({doctorRate}%)</span>
+                    <span className="tabular-nums">{RM(professionalFee)}</span>
+                  </div>
+                  <div className="flex justify-between text-slate-600">
+                    <span>+ ③ Scans (flat)</span>
+                    <span className="tabular-nums">{RM(sub3)}</span>
+                  </div>
+                  <div className="flex justify-between pt-2 border-t border-slate-300 font-bold text-slate-900">
+                    <span>Entitled Commission (day)</span>
+                    <span className="tabular-nums text-blue-700">{RM(entitledDay)}</span>
+                  </div>
+                  {totalBilled - totalCollected > 0.005 && (
+                    <p className="text-[11px] text-amber-600 text-right">
+                      {RM(totalBilled - totalCollected)} billed today is not collected yet
+                    </p>
+                  )}
+                </div>
+              </div>
+            </>
           )}
 
           {/* Sign action */}
@@ -213,7 +365,7 @@ export function DailySignoffPanel({
               <button
                 onClick={() => setConfirm(true)}
                 disabled={busy}
-                className={`text-sm ${signedAt && allVerified ? "btn-secondary" : "btn-primary bg-green-600 hover:bg-green-700 focus:ring-green-500"}`}
+                className={`text-sm ${signedAt ? "btn-secondary" : "btn-primary bg-green-600 hover:bg-green-700 focus:ring-green-500"}`}
               >
                 {busy ? "Signing…" : signedAt ? "Re-sign Day" : "Sign & Verify Day"}
               </button>
@@ -233,8 +385,8 @@ export function DailySignoffPanel({
           <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 space-y-4">
             <h3 className="font-semibold text-slate-900">Confirm sign-off for {day}?</h3>
             <p className="text-sm text-slate-500">
-              You are confirming {rows.length} treatment{rows.length === 1 ? "" : "s"} —{" "}
-              {RM(totalBilled)} billed, {RM(totalCollected)} collected from patients.
+              You are confirming {rows.length} treatment{rows.length === 1 ? "" : "s"} — {RM(totalBilled)} billed,{" "}
+              {RM(totalCollected)} collected, {RM(entitledDay)} entitled commission for the day.
             </p>
             <p className="text-xs text-slate-400">
               Signing also completes your payment verification (step ②) on this day&apos;s payout lines.
