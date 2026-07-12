@@ -32,27 +32,46 @@ export type LocumPayoutStatus =
   | "PAID"
   | "VOIDED";
 
+// Explicit ONE-OFF treatments (per the clinic's classification sheet) —
+// checked FIRST so that e.g. Pulpotomy doesn't fall into RCT, Post Crown /
+// Recement Crown into Crown/Bridge, Bracket Drop into Ortho, Denture Adjust
+// into Denture, or Fix Retainer into anything staged. Includes all scans.
+export const ONE_OFF_CODES = [
+  "EXTRACT", "FILLING", "SCALING", "POLISH", "CHECKUP", "CONSULT",
+  "BRACKET_DROP", "DENTURE_ADJUST", "LASER", "INCISION", "DRAINAGE",
+  "ANESTH", "LA", "MOS", "PA", "RECEMENT", "MEDICATION", "FIX_RETAINER",
+  "PULPOTOMY", "POST_CROWN",
+  // Scans / ancillaries
+  "OPG", "PANORAMIC", "CEPH", "LATERAL", "INTRAORAL", "ITERO", "3SHAPE",
+  "SCAN", "CBCT", "EMS", "XRAY",
+] as const;
+
 // Code prefix/substring patterns — match TreatmentType.code values (case-insensitive)
 const CATEGORY_CODES = {
-  // Multi-stage lab-bearing cases: funds locked until the whole case is complete
-  MULTI_STAGE: ["ENDO", "RCT", "ROOT", "PULP", "PULPOTOMY", "PULPECTOMY",
+  // Multi-stage lab-bearing cases: funds locked until the whole case is complete.
+  // Denture Case per the sheet includes Bruxism, Retainer, Veneer, Whitening.
+  MULTI_STAGE: ["ENDO", "RCT", "ROOT", "PULP", "PULPECTOMY",
                  "CROWN", "CR", "BRIDGE", "BR", "DENTURE", "DEN",
+                 "BRUXISM", "RETAINER", "WHITENING",
                  "VENEER", "CERAMIC", "PFM", "ZIRCONIA", "INLAY", "ONLAY"],
   // Ortho fixed braces — two distinct stages
   ORTHO_DEBOND: ["DEBOND", "DEBAND", "BRACE_REMOVAL", "ORTHO_REMOVAL"],
   ORTHO_BOND:   ["BOND", "BRACKET", "BRACE_FIT", "ORTHO_FIT", "ORTHO_START"],
   ORTHO_GENERAL:["ORTHO", "BRACES", "FIXED_APPLIANCE"],
   // Clear aligners — payment-threshold triggered release
-  ALIGNER:      ["ALIGNER", "ALIGN", "INVISALIGN", "CLEAR_ALIGNER", "RETAINER"],
+  ALIGNER:      ["ALIGNER", "ALIGN", "INVISALIGN", "CLEAR_ALIGNER"],
 } as const;
 
+/** Patterns of ≤3 chars match the code exactly (avoids "BR" hitting BRUXISM,
+ *  "LA" hitting VALPLAST); longer patterns match as substrings. */
 function matchesAny(code: string, patterns: readonly string[]): boolean {
   const upper = code.toUpperCase();
-  return patterns.some(p => upper.includes(p));
+  return patterns.some(p => (p.length <= 3 ? upper === p : upper.includes(p)));
 }
 
 export function classifyLocumTreatment(treatmentTypeCode: string): LocumTreatmentCategory {
-  // Order matters: more specific checks first
+  // Order matters: explicit one-offs first, then more specific staged checks
+  if (matchesAny(treatmentTypeCode, ONE_OFF_CODES))                 return "ONE_OFF";
   if (matchesAny(treatmentTypeCode, CATEGORY_CODES.ORTHO_DEBOND))   return "ORTHO_DEBONDING";
   if (matchesAny(treatmentTypeCode, CATEGORY_CODES.ORTHO_BOND))     return "ORTHO_BONDING";
   if (matchesAny(treatmentTypeCode, CATEGORY_CODES.ORTHO_GENERAL))  return "MULTI_STAGE";
@@ -83,14 +102,24 @@ export interface PayoutSchemeDef {
 }
 
 export const DEFAULT_SCHEMES: PayoutSchemeDef[] = [
-  // RCT / Denture / Crown-Bridge: stage percents ATTRIBUTE the entitlement per
-  // stage (progress tracking, multi-doctor attribution), but nothing is
-  // released until the whole case is COMPLETED — hence requiresCaseComplete
-  // on every stage. Untick "Case done" per stage in Settings › Payout Rules
-  // for clinics that release progressively.
+  // Explicit one-offs — MUST be first so specific names (Post Crown, Bracket
+  // Drop, Denture Adjust, Fix Retainer, Pulpotomy, scans…) don't fall into a
+  // staged scheme by substring. No stages: one-off completion, full release.
+  {
+    name: "One-Off",
+    matchCodes: [...ONE_OFF_CODES],
+    subTypes: [],
+    paymentTracked: false,
+    stages: [],
+  },
+  // RCT / Denture Case / Crown-Bridge: stage percents ATTRIBUTE the
+  // entitlement per stage (progress tracking, multi-doctor attribution), but
+  // nothing is released until the whole case is COMPLETED — hence
+  // requiresCaseComplete on every stage. Untick "Case done" per stage in
+  // Settings › Payout Rules for clinics that release progressively.
   {
     name: "RCT",
-    matchCodes: ["RCT", "ENDO", "ROOT", "PULP", "PULPOTOMY", "PULPECTOMY"],
+    matchCodes: ["RCT", "ENDO", "ROOT", "PULP", "PULPECTOMY"],
     subTypes: ["Anterior", "Premolar", "Molar", "Retreatment"],
     paymentTracked: false,
     stages: [
@@ -100,9 +129,11 @@ export const DEFAULT_SCHEMES: PayoutSchemeDef[] = [
       { name: "Permanent Filling", percent: 15, requiresCaseComplete: true },
     ],
   },
+  // Denture Case per the sheet: Denture, Denture Repair (Lab), Bruxism,
+  // Retainer, Veneer, Whitening — 25% per stage, with lab fee
   {
-    name: "Denture",
-    matchCodes: ["DENTURE", "DEN", "VALPLAST"],
+    name: "Denture Case",
+    matchCodes: ["DENTURE", "DEN", "DENTURE_REPAIR", "BRUXISM", "RETAINER", "VENEER", "WHITENING", "VALPLAST"],
     subTypes: ["Acrylic", "Valplast", "Cobalt Chrome", "Flexible"],
     paymentTracked: false,
     stages: [
@@ -114,7 +145,7 @@ export const DEFAULT_SCHEMES: PayoutSchemeDef[] = [
   },
   {
     name: "Crown / Bridge",
-    matchCodes: ["CROWN", "CR", "BRIDGE", "BR", "VENEER", "CERAMIC", "PFM", "ZIRCONIA", "INLAY", "ONLAY"],
+    matchCodes: ["CROWN", "CR", "BRIDGE", "BR", "CERAMIC", "PFM", "ZIRCONIA", "INLAY", "ONLAY"],
     subTypes: ["PFM", "Zirconia", "Emax", "Full Metal", "Composite"],
     paymentTracked: false,
     stages: [

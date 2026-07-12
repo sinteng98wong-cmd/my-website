@@ -86,7 +86,8 @@ function SchemeCard({ scheme, onSaved }: { scheme: Scheme & { source: string }; 
   const [err, setErr]               = useState("");
 
   const total = stages.reduce((s, r) => s + (Number(r.percent) || 0), 0);
-  const totalOk = Math.abs(total - 100) <= 0.01;
+  // No stages = one-off scheme (full release on completion) — always valid
+  const totalOk = stages.length === 0 || Math.abs(total - 100) <= 0.01;
 
   function setStage(i: number, patch: Partial<StageRule>) {
     setStages(prev => prev.map((s, j) => j === i ? { ...s, ...patch } : s));
@@ -184,7 +185,9 @@ function SchemeCard({ scheme, onSaved }: { scheme: Scheme & { source: string }; 
             <Plus size={12} /> Add stage
           </button>
           <span className={`text-xs font-medium ml-auto ${totalOk ? "text-green-600" : "text-red-600"}`}>
-            Total: {total}% {totalOk ? "✓" : "(must equal 100%)"}
+            {stages.length === 0
+              ? "No stages — one-off completion, full release"
+              : <>Total: {total}% {totalOk ? "✓" : "(must equal 100%)"}</>}
           </span>
         </div>
       </div>

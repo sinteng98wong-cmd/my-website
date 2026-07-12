@@ -63,7 +63,8 @@ export async function POST(req: NextRequest) {
 
   const active = body.active ?? true;
   const paymentTracked = !!body.paymentTracked;
-  if (active && !paymentTracked) {
+  // No stages = explicit one-off scheme (full release on completion) — valid.
+  if (active && !paymentTracked && stages.length > 0) {
     const sum = stages.reduce((s, r) => s + r.percent, 0);
     if (Math.abs(sum - 100) > 0.01)
       return NextResponse.json({ error: `Stage percents must total 100% (currently ${sum}%)` }, { status: 422 });
