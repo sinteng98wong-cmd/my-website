@@ -904,6 +904,59 @@ export async function createPayoutLine(
   return line.id;
 }
 
+// ─── Auto-create a payout line for a treatment ───────────────────────────────
+
+/**
+ * Ensures a payout line exists for a treatment, so daily sales flow straight
+ * into the Doctor Payout tab. Called when the counter records a treatment at
+ * a visit (and by the monthly Sync button as a catch-up).
+ *
+ * - Effective split = treatment.doctorSplit × the doctor's rate
+ *   (per-treatment-type rate when configured, else default rate)
+ * - Auto-links the patient's active treatment plan when one of its stages was
+ *   built from a template of the same treatment type (staged release rules)
+ * - Month is derived from the visit date (MYT)
+ */
+export async function ensurePayoutLineForTreatment(
+  treatmentId: string,
+  p: PrismaClient = defaultPrisma,
+): Promise<string | null> {
+  const t = await p.treatment.findUnique({
+    where: { id: treatmentId },
+    include: {
+      visit:  { select: { clinicId: true, patientId: true, visitDate: true } },
+      doctor: { select: { id: true, defaultRate: true, treatmentRates: { select: { treatmentTypeId: true, rate: true } } } },
+    },
+  });
+  if (!t || !t.doctor) return null; // no doctor assigned — nothing to pay out
+
+  const month = t.visit.visitDate
+    .toLocaleDateString("en-CA", { timeZone: "Asia/Kuala_Lumpur" })
+    .slice(0, 7);
+
+  const typeRate = t.doctor.treatmentRates.find(r => r.treatmentTypeId === t.treatmentTypeId);
+  const rate     = Number(typeRate?.rate ?? t.doctor.defaultRate);
+  const effectiveSplit = Math.round(Number(t.doctorSplit) * rate) / 100;
+
+  const plan = await p.treatmentPlan.findFirst({
+    where: {
+      patientId: t.visit.patientId,
+      status:    { in: ["ACCEPTED", "IN_PROGRESS"] as any },
+      stages:    { some: { template: { treatmentTypeId: t.treatmentTypeId } } },
+    },
+    select: { id: true },
+  });
+
+  return createPayoutLine({
+    treatmentId,
+    doctorProfileId: t.doctor.id,
+    clinicId:        t.visit.clinicId,
+    month,
+    doctorSplit:     effectiveSplit,
+    treatmentPlanId: plan?.id,
+  }, p);
+}
+
 // ─── Auto-recheck lines when a plan progresses ───────────────────────────────
 
 /**

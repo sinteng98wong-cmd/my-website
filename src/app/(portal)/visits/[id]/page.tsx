@@ -1,12 +1,17 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { notDeleted } from "@/lib/soft-delete";
 import { requirePermission } from "@/lib/rbac";
 import { VisitClient } from "./VisitClient";
+import { StagePanel } from "./StagePanel";
 
 export default async function VisitPage({ params }: { params: { id: string } }) {
   await requirePermission("patient:manage");
+  const session = await getServerSession(authOptions);
+  const role = (session?.user as any)?.role as string;
 
   const [visit, treatmentTypes, vendors, doctors, panelProviders] = await Promise.all([
     prisma.visit.findUnique({
@@ -45,6 +50,22 @@ export default async function VisitPage({ params }: { params: { id: string } }) 
 
   if (!visit) notFound();
 
+  // Patient's active treatment plans — lets the doctor mark today's stage done
+  const activePlans = await prisma.treatmentPlan.findMany({
+    where: {
+      patientId: visit.patient.id,
+      status:    { in: ["ACCEPTED", "IN_PROGRESS"] as any },
+    },
+    select: {
+      id: true, planRef: true, title: true, status: true, totalAmount: true, totalPaid: true,
+      stages: {
+        select:  { id: true, name: true, order: true, status: true, completedAt: true },
+        orderBy: { order: "asc" },
+      },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
   const visitSafe        = JSON.parse(JSON.stringify(visit));
   const typesSafe        = treatmentTypes.map(t => ({ ...t, defaultPrice: Number(t.defaultPrice) }));
 
@@ -67,6 +88,12 @@ export default async function VisitPage({ params }: { params: { id: string } }) 
         doctors={doctors}
         panelProviders={panelProviders}
         banks={banks}
+      />
+
+      <StagePanel
+        visitId={visit.id}
+        plans={JSON.parse(JSON.stringify(activePlans))}
+        canComplete={["DOCTOR", "SUPER_ADMIN", "CLINIC_MANAGER"].includes(role)}
       />
     </div>
   );

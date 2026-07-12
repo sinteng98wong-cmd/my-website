@@ -2,20 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { createPayoutLine } from "@/services/locum-payout.service";
+import { ensurePayoutLineForTreatment } from "@/services/locum-payout.service";
 
 /**
  * POST /api/locum-payout/sync
  * Body: { month: "YYYY-MM", clinicId?: string }
  *
- * Creates payout lines for every treatment in the month that doesn't have
- * one yet — for ALL doctors (permanent and locum), so every doctor's
- * earnings are tracked per treatment line.
- *
- * Effective split follows the commission formula:
- *   (Treatment − Lab − SST) × DoctorSplit × DoctorRate
- * where DoctorRate is the doctor's per-treatment-type rate if configured,
- * otherwise their default rate.
+ * Catch-up: creates payout lines for every treatment in the month that
+ * doesn't have one yet — for ALL doctors (permanent and locum). New
+ * treatments recorded at a visit get their line automatically; this covers
+ * anything recorded before that hook existed or entered by other paths.
  *
  * Roles: SUPER_ADMIN, FINANCE, CLINIC_MANAGER
  */
@@ -47,36 +43,8 @@ export async function POST(req: NextRequest) {
         ...(clinicId ? { clinicId } : {}),
       },
     },
-    include: {
-      visit:  { select: { clinicId: true, patientId: true } },
-      doctor: { select: { id: true, defaultRate: true, treatmentRates: { select: { treatmentTypeId: true, rate: true } } } },
-    },
+    select: { id: true, doctorId: true },
   });
-
-  // Active treatment plans for these patients — used to auto-link staged cases
-  // (a plan matches when one of its stages was built from a template of the
-  // same treatment type)
-  const patientIds = Array.from(new Set(treatments.map((t: any) => t.visit.patientId)));
-  const activePlans = await prisma.treatmentPlan.findMany({
-    where: {
-      patientId: { in: patientIds },
-      status:    { in: ["ACCEPTED", "IN_PROGRESS"] as any },
-    },
-    select: {
-      id: true, patientId: true,
-      stages: { select: { template: { select: { treatmentTypeId: true } } } },
-    },
-  });
-  const plansByPatient = new Map<string, typeof activePlans>();
-  for (const plan of activePlans) {
-    const list = plansByPatient.get(plan.patientId) ?? [];
-    list.push(plan);
-    plansByPatient.set(plan.patientId, list);
-  }
-  function planFor(patientId: string, treatmentTypeId: string): string | undefined {
-    return plansByPatient.get(patientId)
-      ?.find(p => p.stages.some(s => s.template?.treatmentTypeId === treatmentTypeId))?.id;
-  }
 
   // Skip treatments that already have a payout line for this doctor
   const existing = await (prisma as any).locumPayoutLine.findMany({
@@ -89,22 +57,10 @@ export async function POST(req: NextRequest) {
   const errors: string[] = [];
 
   for (const t of treatments as any[]) {
-    if (existingKeys.has(`${t.id}:${t.doctor.id}`)) continue;
-
-    const typeRate = t.doctor.treatmentRates.find((r: any) => r.treatmentTypeId === t.treatmentTypeId);
-    const rate     = Number(typeRate?.rate ?? t.doctor.defaultRate);
-    const effectiveSplit = Math.round(Number(t.doctorSplit) * rate) / 100; // split% × rate%
-
+    if (existingKeys.has(`${t.id}:${t.doctorId}`)) continue;
     try {
-      await createPayoutLine({
-        treatmentId:     t.id,
-        doctorProfileId: t.doctor.id,
-        clinicId:        t.visit.clinicId,
-        month,
-        doctorSplit:     effectiveSplit,
-        treatmentPlanId: planFor(t.visit.patientId, t.treatmentTypeId),
-      });
-      created++;
+      const id = await ensurePayoutLineForTreatment(t.id);
+      if (id) created++;
     } catch (e: any) {
       errors.push(`${t.id}: ${e.message}`);
     }

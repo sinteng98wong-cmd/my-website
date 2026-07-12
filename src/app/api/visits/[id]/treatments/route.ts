@@ -82,10 +82,23 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       data:  { labJobId: labJob.id },
     });
 
+    await createPayoutLineBestEffort(treatment.id);
     return NextResponse.json({ treatment: { ...treatment, labJob }, labJob }, { status: 201 });
   }
 
+  await createPayoutLineBestEffort(treatment.id);
   return NextResponse.json({ treatment }, { status: 201 });
+}
+
+/** Daily sales → payout: create the doctor's payout line for this treatment.
+ *  Best-effort — a payout failure must never block treatment recording. */
+async function createPayoutLineBestEffort(treatmentId: string) {
+  try {
+    const { ensurePayoutLineForTreatment } = await import("@/services/locum-payout.service");
+    await ensurePayoutLineForTreatment(treatmentId);
+  } catch (e) {
+    console.error("Payout line auto-create failed:", e);
+  }
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {

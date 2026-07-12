@@ -113,10 +113,16 @@ export async function POST(req: NextRequest) {
     const collectedTotal = cashLikePayments.reduce((s, p) => s + p.amount, 0);
     for (const t of treatments) {
       const proportion = total > 0 ? (Number(t.billedAmount) / d.subtotal) * collectedTotal : 0;
+      const collected  = Math.min(proportion, Number(t.billedAmount));
       await prisma.treatment.update({
         where: { id: t.id },
-        data:  { collectedAmount: Math.min(proportion, Number(t.billedAmount)) },
+        data:  { collectedAmount: collected },
       });
+      // Keep the payout line's collected snapshot in step with daily sales
+      await (prisma as any).locumPayoutLine.updateMany({
+        where: { treatmentId: t.id, status: { notIn: ["PAID", "VOIDED"] } },
+        data:  { collectedAmount: collected },
+      }).catch(() => {});
     }
   }
 
