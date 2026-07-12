@@ -93,7 +93,7 @@ export default async function VisitPage({ params }: { params: { id: string } }) 
       <StagePanel
         visitId={visit.id}
         plans={JSON.parse(JSON.stringify(activePlans))}
-        canComplete={["DOCTOR", "SUPER_ADMIN", "CLINIC_MANAGER"].includes(role)}
+        canComplete={["DOCTOR", "SUPER_ADMIN", "CLINIC_MANAGER", "RECEPTIONIST", "NURSE"].includes(role)}
       />
     </div>
   );

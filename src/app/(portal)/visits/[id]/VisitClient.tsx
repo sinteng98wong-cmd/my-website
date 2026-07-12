@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 function fmt(n: number | string) {
   return new Intl.NumberFormat("ms-MY", { style: "currency", currency: "MYR" }).format(Number(n));
@@ -61,6 +62,7 @@ export function VisitClient({
   panelProviders: PanelProvider[];
   banks: Bank[];
 }) {
+  const router = useRouter();
   const [visit, setVisit]           = useState<Visit>(initial);
   const [saving, setSaving]         = useState(false);
   const [savingNote, setSavingNote] = useState(false);
@@ -156,6 +158,9 @@ export function VisitClient({
     };
     setVisit(v => ({ ...v, treatments: [...v.treatments, newTx] }));
     setTx({ ...blank });
+    // Re-render server components — a staged treatment may have auto-created
+    // a treatment plan, which shows up in the Stage panel below
+    router.refresh();
   }
 
   async function handleRemoveTreatment(id: string) {

@@ -960,8 +960,12 @@ export async function createPayoutLine(
  *
  * - Effective split = treatment.doctorSplit × the doctor's rate
  *   (per-treatment-type rate when configured, else default rate)
- * - Auto-links the patient's active treatment plan when one of its stages was
+ * - Links the patient's active treatment plan when one of its stages was
  *   built from a template of the same treatment type (staged release rules)
+ * - If the treatment is a STAGED type (per the payout schemes) and the
+ *   patient has no matching plan yet, a plan is AUTO-CREATED with the
+ *   scheme's stages — so the counter/doctor can log stages right on the
+ *   visit page without setting up a plan first
  * - Month is derived from the visit date (MYT)
  */
 export async function ensurePayoutLineForTreatment(
@@ -971,8 +975,9 @@ export async function ensurePayoutLineForTreatment(
   const t = await p.treatment.findUnique({
     where: { id: treatmentId },
     include: {
-      visit:  { select: { clinicId: true, patientId: true, visitDate: true } },
-      doctor: { select: { id: true, defaultRate: true, treatmentRates: { select: { treatmentTypeId: true, rate: true } } } },
+      visit:         { select: { clinicId: true, patientId: true, visitDate: true } },
+      treatmentType: { select: { code: true, name: true } },
+      doctor:        { select: { id: true, userId: true, defaultRate: true, treatmentRates: { select: { treatmentTypeId: true, rate: true } } } },
     },
   });
   if (!t || !t.doctor) return null; // no doctor assigned — nothing to pay out
@@ -985,14 +990,53 @@ export async function ensurePayoutLineForTreatment(
   const rate     = Number(typeRate?.rate ?? t.doctor.defaultRate);
   const effectiveSplit = Math.round(Number(t.doctorSplit) * rate) / 100;
 
-  const plan = await p.treatmentPlan.findFirst({
+  let plan = await p.treatmentPlan.findFirst({
     where: {
       patientId: t.visit.patientId,
       status:    { in: ["ACCEPTED", "IN_PROGRESS"] as any },
-      stages:    { some: { template: { treatmentTypeId: t.treatmentTypeId } } },
+      OR: [
+        { stages: { some: { template: { treatmentTypeId: t.treatmentTypeId } } } },
+        { notes: `auto:${t.treatmentTypeId}` }, // plan auto-created below for this type
+      ],
     },
     select: { id: true },
   });
+
+  // Staged treatment with no plan yet → auto-create the case from the scheme
+  if (!plan) {
+    const schemes = await getEffectiveSchemes(t.visit.clinicId, p);
+    const scheme  = matchScheme(schemes, t.treatmentType.code);
+    if (scheme && scheme.stages.length > 0) {
+      const { generateTreatmentPlanRef } = await import("@/lib/ref-generator");
+      const planRef = await generateTreatmentPlanRef();
+      const billed  = Number(t.billedAmount);
+      plan = await p.treatmentPlan.create({
+        data: {
+          planRef,
+          patientId:  t.visit.patientId,
+          clinicId:   t.visit.clinicId,
+          dentistId:  t.doctor.userId,
+          title:      `${t.treatmentType.name} (${scheme.name})`,
+          status:     "ACCEPTED" as any,
+          acceptedAt: new Date(),
+          notes:      `auto:${t.treatmentTypeId}`,
+          toothCodes: [],
+          subtotal:    billed,
+          totalAmount: billed,
+          totalPaid:   Number(t.collectedAmount),
+          stages: {
+            create: scheme.stages.map((s, i) => ({
+              name:   s.name,
+              order:  i + 1,
+              status: "PENDING" as any,
+              cost:   Math.round(billed * s.percent) / 100,
+            })),
+          },
+        },
+        select: { id: true },
+      });
+    }
+  }
 
   return createPayoutLine({
     treatmentId,
