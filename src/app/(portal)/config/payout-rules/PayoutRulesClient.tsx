@@ -23,15 +23,28 @@ type Scheme = {
   active: boolean;
 };
 
+type ScanRate = { clinicId?: string | null; code: string; label: string; rate: number; active?: boolean };
+
 interface Props {
   clinics:  { id: string; name: string }[];
   saved:    Scheme[];
   defaults: Omit<Scheme, "id" | "clinicId" | "active">[];
+  savedScans:   ScanRate[];
+  defaultScans: ScanRate[];
 }
 
-export function PayoutRulesClient({ clinics, saved, defaults }: Props) {
+export function PayoutRulesClient({ clinics, saved, defaults, savedScans, defaultScans }: Props) {
   const router = useRouter();
   const [clinicId, setClinicId] = useState<string>(""); // "" = global defaults
+
+  // Effective scan rates for the selected scope
+  const scanRates = useMemo(() => {
+    const byCode = new Map<string, ScanRate & { source: "default" | "global" | "clinic" }>();
+    for (const d of defaultScans) byCode.set(d.code, { ...d, clinicId: clinicId || null, source: "default" });
+    for (const s of savedScans.filter(s => s.clinicId === null)) byCode.set(s.code, { ...s, ...(clinicId ? { clinicId } : {}), source: "global" });
+    if (clinicId) for (const s of savedScans.filter(s => s.clinicId === clinicId)) byCode.set(s.code, { ...s, source: "clinic" });
+    return Array.from(byCode.values());
+  }, [clinicId, savedScans, defaultScans]);
 
   // Effective editing set for the selected scope: saved row for this scope,
   // else (for clinic scope) the global saved row, else the built-in default.
@@ -70,6 +83,69 @@ export function PayoutRulesClient({ clinics, saved, defaults }: Props) {
       {schemes.map(s => (
         <SchemeCard key={`${clinicId}:${s.name}`} scheme={s} onSaved={() => router.refresh()} />
       ))}
+
+      <ScanRatesCard key={`scans:${clinicId}`} clinicId={clinicId || null} rates={scanRates} onSaved={() => router.refresh()} />
+    </div>
+  );
+}
+
+// ─── Scan flat-rate editor ────────────────────────────────────────────────────
+
+function ScanRatesCard({
+  clinicId, rates, onSaved,
+}: { clinicId: string | null; rates: (ScanRate & { source: string })[]; onSaved: () => void }) {
+  const [rows, setRows] = useState(rates.map(r => ({ ...r })));
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg]   = useState("");
+  const [err, setErr]   = useState("");
+
+  function setRow(i: number, patch: Partial<ScanRate>) {
+    setRows(prev => prev.map((r, j) => j === i ? { ...r, ...patch } : r));
+  }
+
+  async function saveAll() {
+    setBusy(true); setErr(""); setMsg("");
+    try {
+      for (const r of rows) {
+        const res = await fetch("/api/payout-scan-rates", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ clinicId, code: r.code, label: r.label, rate: r.rate, active: true }),
+        });
+        if (!res.ok) { const d = await res.json(); throw new Error(d.error ?? "Save failed"); }
+      }
+      setMsg("Saved"); onSaved();
+    } catch (e: any) { setErr(e.message); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div className="card p-5 space-y-4">
+      <div className="flex items-center gap-2">
+        <h3 className="font-semibold text-slate-900">Scan Flat Rates</h3>
+        <span className="text-xs text-slate-400">flat commission per scan — not the billed price</span>
+      </div>
+
+      <div className="grid grid-cols-[1fr_1fr_120px] gap-2 text-[10px] font-semibold text-slate-400 uppercase tracking-wide px-1">
+        <span>Code</span><span>Label (shown on slip)</span><span>Rate (RM)</span>
+      </div>
+      <div className="space-y-1.5">
+        {rows.map((r, i) => (
+          <div key={r.code} className="grid grid-cols-[1fr_1fr_120px] gap-2 items-center">
+            <input value={r.code} disabled className="form-input text-sm py-1.5 bg-slate-50 font-mono text-slate-500" />
+            <input value={r.label} onChange={e => setRow(i, { label: e.target.value })} className="form-input text-sm py-1.5" />
+            <input type="number" min="0" step="0.01" value={r.rate}
+              onChange={e => setRow(i, { rate: Number(e.target.value) })} className="form-input text-sm py-1.5" />
+          </div>
+        ))}
+      </div>
+
+      <div className="flex items-center gap-2 pt-1 border-t border-slate-100">
+        <button onClick={saveAll} disabled={busy} className="btn-primary text-xs flex items-center gap-1.5 disabled:opacity-40">
+          <Save size={12} /> {busy ? "Saving…" : "Save Scan Rates"}
+        </button>
+        {msg && <span className="text-xs text-green-600">{msg}</span>}
+        {err && <span className="text-xs text-red-600">{err}</span>}
+      </div>
     </div>
   );
 }

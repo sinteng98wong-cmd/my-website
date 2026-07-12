@@ -2,7 +2,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { DEFAULT_SCHEMES } from "@/services/locum-payout.service";
+import { DEFAULT_SCHEMES, DEFAULT_SCAN_RATES } from "@/services/locum-payout.service";
 import { PayoutRulesClient } from "./PayoutRulesClient";
 
 export default async function PayoutRulesPage() {
@@ -10,9 +10,10 @@ export default async function PayoutRulesPage() {
   const role = (session?.user as any)?.role as string;
   if (!["SUPER_ADMIN", "FINANCE", "CLINIC_MANAGER"].includes(role)) redirect("/dashboard");
 
-  const [clinics, saved] = await Promise.all([
+  const [clinics, saved, savedScans] = await Promise.all([
     prisma.clinic.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } }),
     (prisma as any).payoutScheme.findMany({ orderBy: [{ name: "asc" }] }).catch(() => []),
+    (prisma as any).payoutScanRate.findMany({ orderBy: [{ code: "asc" }] }).catch(() => []),
   ]);
 
   return (
@@ -34,6 +35,10 @@ export default async function PayoutRulesPage() {
           paymentTracked: s.paymentTracked, stages: s.stages, active: s.active,
         }))}
         defaults={DEFAULT_SCHEMES}
+        savedScans={(savedScans as any[]).map((s: any) => ({
+          clinicId: s.clinicId, code: s.code, label: s.label, rate: Number(s.rate), active: s.active,
+        }))}
+        defaultScans={DEFAULT_SCAN_RATES}
       />
     </div>
   );

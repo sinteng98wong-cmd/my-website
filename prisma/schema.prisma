@@ -133,6 +133,7 @@ model Clinic {
   consentRequests      ConsentRequest[]
   locumPayoutLines     LocumPayoutLine[]
   payoutSchemes        PayoutScheme[]
+  payoutScanRates      PayoutScanRate[]
 
   // Branch contact info
   address    String?
@@ -2706,5 +2707,22 @@ model PayoutScheme {
   updatedAt      DateTime @updatedAt
 
   @@unique([clinicId, name])
+  @@index([clinicId])
+}
+
+// ── Scan flat commission rates (configurable per clinic) ───────────────────
+// Scans pay the doctor a FLAT amount per scan (not a share of the billed
+// price): OPG 20, Lateral 15, EMS 100, iTero 40, CBCT 35, etc.
+model PayoutScanRate {
+  id        String   @id @default(cuid())
+  clinicId  String?  // null = global default; a clinic row overrides it
+  clinic    Clinic?  @relation(fields: [clinicId], references: [id])
+  code      String   // TreatmentType.code, e.g. OPG, LATERAL_CEPH, EMS, INTRAORAL_SCAN, CBCT
+  label     String   // display name for the slip
+  rate      Decimal  @db.Decimal(10,2) // flat commission per scan
+  active    Boolean  @default(true)
+  updatedAt DateTime @updatedAt
+
+  @@unique([clinicId, code])
   @@index([clinicId])
 }

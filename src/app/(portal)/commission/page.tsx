@@ -6,7 +6,8 @@ import { prisma } from "@/lib/prisma";
 import { StaffCommissionTable }  from "./StaffCommissionTable";
 import { LocumPayoutTable, type LocumDoctorGroup } from "./LocumPayoutTable";
 import { DailySignoffPanel, type DayRow } from "./DailySignoffPanel";
-import { getEffectiveSchemes, matchScheme, computeStageRelease, isScanCode } from "@/services/locum-payout.service";
+import { MonthlyCommissionPanel, type MonthlyData } from "./MonthlyCommissionPanel";
+import { getEffectiveSchemes, matchScheme, computeStageRelease, isScanCode, getEffectiveScanRates, scanFlatRate } from "@/services/locum-payout.service";
 import { redirect } from "next/navigation";
 import { Users, Calculator, Banknote, FileCheck, Wallet, BadgeCheck, type LucideIcon } from "lucide-react";
 
@@ -21,7 +22,7 @@ const TABS = [
 export default async function CommissionPage({
   searchParams,
 }: {
-  searchParams: { month?: string; tab?: string; view?: string; day?: string; signoffDoctor?: string };
+  searchParams: { month?: string; tab?: string; view?: string; day?: string; signoffDoctor?: string; payoutView?: string };
 }) {
   const session = await getServerSession(authOptions);
   const role    = (session?.user as any)?.role   as string;
@@ -108,6 +109,7 @@ export default async function CommissionPage({
   // Classify each line into a workflow bucket for the status-grouped view,
   // and compute how much of the case the completed stages have earned so far
   const schemes = await getEffectiveSchemes(selectedClinicId || null).catch(() => []);
+  const scanRates = await getEffectiveScanRates(selectedClinicId || null).catch(() => []);
   function classify(l: any): { bucket: string; accruedPct: number | null } {
     if (l.status === "VOIDED") return { bucket: "voided", accruedPct: null };
     if (l.status === "PAID")   return { bucket: "paid",   accruedPct: null };
@@ -378,7 +380,7 @@ export default async function CommissionPage({
         labFee,
         labFeeConfirmed: line ? !!line.labFeeConfirmed : null,
         net,
-        gained:         scan ? billed : staged ? 0 : net, // scans flat; staged earns via stages
+        gained:         scan ? scanFlatRate(scanRates, code) : staged ? 0 : net, // scans: configurable flat rate; staged earns via stages
         lineStatus:     line?.status ?? null,
         doctorVerified: !!line?.doctorVerifiedAt,
       });
@@ -389,6 +391,103 @@ export default async function CommissionPage({
     signoffDoctorName = canPickDoctor
       ? (signoffDoctors.find(d => d.id === signoffDoctorId)?.name ?? null)
       : null;
+  }
+
+  // ── Monthly commission summary (spreadsheet-style) ────────────────────
+  const payoutView = searchParams.payoutView === "monthly" ? "monthly" : "daily";
+  let monthly: MonthlyData | null = null;
+  if (tab === "locum" && signoffDoctorId && payoutView === "monthly") {
+    const mStart = new Date(`${month}-01T00:00:00+08:00`);
+    const [my, mm] = month.split("-").map(Number);
+    const nextM = mm === 12 ? `${my + 1}-01` : `${my}-${String(mm + 1).padStart(2, "0")}`;
+    const mEnd = new Date(`${nextM}-01T00:00:00+08:00`);
+    const inMonth = (d: Date | string | null | undefined) => {
+      if (!d) return false;
+      const t = new Date(d).getTime();
+      return t >= mStart.getTime() && t < mEnd.getTime();
+    };
+
+    const CATEGORY_LABEL: Record<string, string> = {
+      "One-Off":       "Gross Collection (One-Off)",
+      "RCT":           "ENDO Case (Root Canal)",
+      "Denture Case":  "Denture Case",
+      "Crown / Bridge":"Crown / Bridge Case",
+      "Ortho":         "Ortho Case",
+      "Aligner":       "Aligner Case",
+    };
+    const CATEGORY_ORDER = ["One-Off", "RCT", "Denture Case", "Crown / Bridge", "Ortho", "Aligner"];
+
+    const [monthTreatments, monthStageLines] = await Promise.all([
+      prisma.treatment.findMany({
+        where: { doctorId: signoffDoctorId, visit: { visitDate: { gte: mStart, lt: mEnd }, deletedAt: null } },
+        select: {
+          id: true, billedAmount: true, labFee: true,
+          treatmentType: { select: { code: true, name: true } },
+          locumPayoutLines: { where: { doctorProfileId: signoffDoctorId }, select: { id: true, category: true, labFee: true, subType: true, treatmentPlanId: true } },
+        },
+      }),
+      (prisma as any).locumPayoutLine.findMany({
+        where: { doctorProfileId: signoffDoctorId, treatmentPlanId: { not: null }, treatmentPlan: { stages: { some: { completedAt: { gte: mStart, lt: mEnd } } } } },
+        select: {
+          id: true, labFee: true, subType: true, treatmentPlanId: true,
+          treatment: { select: { billedAmount: true, treatmentType: { select: { code: true } } } },
+          treatmentPlan: { select: { stages: { select: { completedAt: true }, orderBy: { order: "asc" } } } },
+        },
+      }).catch(() => []),
+    ]);
+
+    const catAmount = new Map<string, number>();
+    const scanCount = new Map<string, number>();
+    const seenLine = new Set<string>();
+
+    // Progressive stage-completions in month (source B)
+    for (const l of monthStageLines as any[]) {
+      seenLine.add(l.id);
+      const scheme = matchScheme(schemes, l.treatment.treatmentType.code, l.subType ?? null);
+      let pct = 0;
+      (l.treatmentPlan.stages as any[]).forEach((s, i) => { if (inMonth(s.completedAt)) pct += scheme?.stages[i]?.percent ?? 0; });
+      const net = Math.max(0, Number(l.treatment.billedAmount) - Number(l.labFee));
+      const gained = Math.round(net * pct) / 100;
+      const cat = scheme?.name ?? "One-Off";
+      catAmount.set(cat, (catAmount.get(cat) ?? 0) + gained);
+    }
+
+    // Same-month treatments (source A): one-off net + scans; progressive already in B
+    for (const t of monthTreatments as any[]) {
+      const line = t.locumPayoutLines[0] ?? null;
+      const code = t.treatmentType.code;
+      if (isScanCode(code)) { scanCount.set(code, (scanCount.get(code) ?? 0) + 1); continue; }
+      if (line && seenLine.has(line.id)) continue;
+      const staged = !!line && line.category !== "ONE_OFF";
+      if (staged) continue; // progressive counts only via completed stages (source B)
+      const net = Math.max(0, Number(t.billedAmount) - Number(line?.labFee ?? t.labFee));
+      catAmount.set("One-Off", (catAmount.get("One-Off") ?? 0) + net);
+    }
+
+    const categories = CATEGORY_ORDER
+      .map(key => ({ key, label: CATEGORY_LABEL[key] ?? key, amount: Math.round((catAmount.get(key) ?? 0) * 100) / 100 }));
+    const grossTotal = Math.round(categories.reduce((s, c) => s + c.amount, 0) * 100) / 100;
+    const professionalFee = Math.round(grossTotal * signoffDoctorRate) / 100;
+
+    const scans = scanRates
+      .map(r => {
+        const patients = Array.from(scanCount.entries())
+          .filter(([code]) => code.toUpperCase() === r.code || code.toUpperCase().includes(r.code))
+          .reduce((s, [, n]) => s + n, 0);
+        return { code: r.code, label: r.label, patients, rate: r.rate, net: Math.round(patients * r.rate * 100) / 100 };
+      })
+      .filter(s => s.patients > 0);
+    const scanTotal = Math.round(scans.reduce((s, r) => s + r.net, 0) * 100) / 100;
+
+    monthly = {
+      categories,
+      grossTotal,
+      doctorRate: signoffDoctorRate,
+      professionalFee,
+      scans,
+      scanTotal,
+      totalPayable: Math.round((professionalFee + scanTotal) * 100) / 100,
+    };
   }
 
   // Summary stats
@@ -462,19 +561,35 @@ export default async function CommissionPage({
       {tab === "locum" && (
         <>
           {(isDoctor || canPickDoctor) && signoffDoctorId && (
-            <DailySignoffPanel
-              day={day}
-              month={month}
-              view={view}
-              isDoctor={isDoctor}
-              canPickDoctor={canPickDoctor}
-              doctors={signoffDoctors}
-              selectedDoctorId={signoffDoctorId}
-              doctorName={signoffDoctorName}
-              doctorRate={signoffDoctorRate}
-              rows={dayRows}
-              signedAt={signedAt}
-            />
+            <>
+              {/* Daily / Monthly sub-tabs */}
+              <div className="flex rounded-lg border border-slate-200 overflow-hidden text-sm font-medium w-fit">
+                <a href={`?tab=locum&month=${month}&view=${view}&payoutView=daily&day=${day}${signoffDoctorId ? `&signoffDoctor=${signoffDoctorId}` : ""}`}
+                  className={`px-4 py-2 transition-colors ${payoutView === "daily" ? "bg-blue-600 text-white" : "bg-white text-slate-500 hover:bg-slate-50"}`}>
+                  Daily
+                </a>
+                <a href={`?tab=locum&month=${month}&view=${view}&payoutView=monthly${signoffDoctorId ? `&signoffDoctor=${signoffDoctorId}` : ""}`}
+                  className={`px-4 py-2 transition-colors ${payoutView === "monthly" ? "bg-blue-600 text-white" : "bg-white text-slate-500 hover:bg-slate-50"}`}>
+                  Monthly
+                </a>
+              </div>
+
+              {payoutView === "monthly" && monthly
+                ? <MonthlyCommissionPanel month={month} doctorName={signoffDoctorName} data={monthly} />
+                : <DailySignoffPanel
+                    day={day}
+                    month={month}
+                    view={view}
+                    isDoctor={isDoctor}
+                    canPickDoctor={canPickDoctor}
+                    doctors={signoffDoctors}
+                    selectedDoctorId={signoffDoctorId}
+                    doctorName={signoffDoctorName}
+                    doctorRate={signoffDoctorRate}
+                    rows={dayRows}
+                    signedAt={signedAt}
+                  />}
+            </>
           )}
           <LocumPayoutTable
             groups={locumGroups}

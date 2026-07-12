@@ -55,6 +55,45 @@ export function isScanCode(code: string): boolean {
   return matchesAny(code, SCAN_CODES);
 }
 
+// ─── Scan flat commission rates (configurable per clinic) ────────────────────
+// Scans pay a FLAT amount per scan, not a share of the billed price.
+
+export interface ScanRateDef { code: string; label: string; rate: number; }
+
+export const DEFAULT_SCAN_RATES: ScanRateDef[] = [
+  { code: "OPG",            label: "OPG (X-ray)",       rate: 20 },
+  { code: "LATERAL_CEPH",   label: "Lateral (X-ray)",   rate: 15 },
+  { code: "EMS",            label: "EMS",               rate: 100 },
+  { code: "INTRAORAL_SCAN", label: "iTero Scan",        rate: 40 },
+  { code: "CBCT",           label: "CBCT",              rate: 35 },
+  { code: "XRAY",           label: "X-ray (Periapical)", rate: 10 },
+];
+
+/** Effective scan rates for a clinic: defaults ← global DB rows ← clinic DB rows. */
+export async function getEffectiveScanRates(
+  clinicId: string | null,
+  p: PrismaClient = defaultPrisma,
+): Promise<ScanRateDef[]> {
+  const rows: any[] = await (p as any).payoutScanRate.findMany({
+    where: { OR: [{ clinicId: null }, ...(clinicId ? [{ clinicId }] : [])] },
+  }).catch(() => []);
+
+  const byCode = new Map<string, ScanRateDef | null>();
+  for (const d of DEFAULT_SCAN_RATES) byCode.set(d.code, d);
+  const apply = (r: any) => byCode.set(r.code, r.active ? { code: r.code, label: r.label, rate: Number(r.rate) } : null);
+  rows.filter(r => r.clinicId === null).forEach(apply);
+  rows.filter(r => r.clinicId !== null).forEach(apply);
+
+  return Array.from(byCode.values()).filter((r): r is ScanRateDef => r !== null);
+}
+
+/** Flat commission for a scan treatment code (0 if not a configured scan). */
+export function scanFlatRate(rates: ScanRateDef[], code: string): number {
+  const upper = code.toUpperCase();
+  const hit = rates.find(r => upper === r.code || upper.includes(r.code));
+  return hit ? hit.rate : 0;
+}
+
 // Code prefix/substring patterns — match TreatmentType.code values (case-insensitive)
 const CATEGORY_CODES = {
   // Multi-stage lab-bearing cases: funds locked until the whole case is complete.
