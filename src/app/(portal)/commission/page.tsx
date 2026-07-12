@@ -5,6 +5,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { StaffCommissionTable }  from "./StaffCommissionTable";
 import { LocumPayoutTable, type LocumDoctorGroup } from "./LocumPayoutTable";
+import { DailySignoffPanel, type DayRow } from "./DailySignoffPanel";
 import { getEffectiveSchemes, matchScheme, computeStageRelease } from "@/services/locum-payout.service";
 import { Users, Calculator, Banknote, FileCheck, Wallet, BadgeCheck, type LucideIcon } from "lucide-react";
 
@@ -19,7 +20,7 @@ const TABS = [
 export default async function CommissionPage({
   searchParams,
 }: {
-  searchParams: { month?: string; tab?: string; view?: string };
+  searchParams: { month?: string; tab?: string; view?: string; day?: string; signoffDoctor?: string };
 }) {
   const session = await getServerSession(authOptions);
   const role    = (session?.user as any)?.role   as string;
@@ -205,6 +206,76 @@ export default async function CommissionPage({
 
   const locumGroups = buildLocumGroups(locumLines as any[]);
 
+  // ── Daily sign-off panel data ─────────────────────────────────────────
+  // Doctors see their own day; manage roles pick any doctor.
+  const canPickDoctor = ["SUPER_ADMIN", "FINANCE", "CLINIC_MANAGER"].includes(role);
+  const todayMYT = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kuala_Lumpur" });
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(searchParams.day ?? "") ? searchParams.day! : todayMYT;
+
+  let signoffDoctors: { id: string; name: string }[] = [];
+  let signoffDoctorId = ownDoctorProfileId ?? "";
+  if (canPickDoctor) {
+    signoffDoctors = (await prisma.doctorProfile.findMany({
+      include: { user: { select: { name: true } } },
+      orderBy: { user: { name: "asc" } },
+    })).map(d => ({ id: d.id, name: d.user.name }));
+    signoffDoctorId = searchParams.signoffDoctor && signoffDoctors.some(d => d.id === searchParams.signoffDoctor)
+      ? searchParams.signoffDoctor
+      : (signoffDoctors[0]?.id ?? "");
+  }
+
+  let dayRows: DayRow[] = [];
+  let signedAt: string | null = null;
+  let signoffDoctorName: string | null = null;
+  if (tab === "locum" && signoffDoctorId) {
+    const dayStart = new Date(day);
+    const dayEnd   = new Date(dayStart);
+    dayEnd.setDate(dayEnd.getDate() + 1);
+
+    const [dayTreatments, signoffRow] = await Promise.all([
+      prisma.treatment.findMany({
+        where: {
+          doctorId: signoffDoctorId,
+          visit: { visitDate: { gte: dayStart, lt: dayEnd }, deletedAt: null },
+        },
+        include: {
+          treatmentType: { select: { name: true } },
+          visit: { include: { patient: { select: { name: true, patientRef: true } } } },
+          locumPayoutLines: {
+            where:  { doctorProfileId: signoffDoctorId },
+            select: { status: true, entitledAmount: true, doctorVerifiedAt: true, subType: true },
+          },
+        },
+        orderBy: { createdAt: "asc" },
+      }),
+      (prisma as any).doctorDailySignoff.findFirst({
+        where: { doctorId: signoffDoctorId, date: dayStart },
+        select: { signedAt: true },
+      }).catch(() => null),
+    ]);
+
+    dayRows = (dayTreatments as any[]).map(t => {
+      const line = t.locumPayoutLines[0] ?? null;
+      return {
+        id:             t.id,
+        patientName:    t.visit.patient.name,
+        patientRef:     t.visit.patient.patientRef,
+        treatmentName:  t.treatmentType.name,
+        subType:        line?.subType ?? null,
+        billed:         Number(t.billedAmount),
+        collected:      Number(t.collectedAmount),
+        labFee:         Number(t.labFee),
+        entitled:       line ? Number(line.entitledAmount) : null,
+        lineStatus:     line?.status ?? null,
+        doctorVerified: !!line?.doctorVerifiedAt,
+      };
+    });
+    signedAt = signoffRow?.signedAt?.toISOString() ?? null;
+    signoffDoctorName = canPickDoctor
+      ? (signoffDoctors.find(d => d.id === signoffDoctorId)?.name ?? null)
+      : null;
+  }
+
   // Summary stats
   const totalEntitled = locumGroups.reduce((s, g) => s + g.totalEntitled, 0);
   const totalReleased = locumGroups.reduce((s, g) => s + g.totalReleased, 0);
@@ -274,14 +345,30 @@ export default async function CommissionPage({
       {/* ── Tab content ─────────────────────────────────────────────────── */}
 
       {tab === "locum" && (
-        <LocumPayoutTable
-          groups={locumGroups}
-          month={month}
-          role={role}
-          view={view}
-          ownDoctorId={ownDoctorProfileId}
-          stmtByDoctor={stmtByDoctor}
-        />
+        <>
+          {(isDoctor || canPickDoctor) && signoffDoctorId && (
+            <DailySignoffPanel
+              day={day}
+              month={month}
+              view={view}
+              isDoctor={isDoctor}
+              canPickDoctor={canPickDoctor}
+              doctors={signoffDoctors}
+              selectedDoctorId={signoffDoctorId}
+              doctorName={signoffDoctorName}
+              rows={dayRows}
+              signedAt={signedAt}
+            />
+          )}
+          <LocumPayoutTable
+            groups={locumGroups}
+            month={month}
+            role={role}
+            view={view}
+            ownDoctorId={ownDoctorProfileId}
+            stmtByDoctor={stmtByDoctor}
+          />
+        </>
       )}
 
       {tab === "staff" && (

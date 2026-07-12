@@ -117,7 +117,7 @@ export default async function DashboardPage() {
     DOCTOR:         [
       { label: "My Schedule",    href: "/schedule",            Icon: CalendarCheck },
       { label: "My Commission",  href: "/commission",          Icon: Banknote },
-      { label: "Daily Sign-off", href: "/commission/daily",    Icon: Stethoscope },
+      { label: "Daily Sign-off", href: "/commission?tab=locum", Icon: Stethoscope },
     ],
     FINANCE:        [
       { label: "Daily Ledger",   href: "/ledger",              Icon: ClipboardList },
