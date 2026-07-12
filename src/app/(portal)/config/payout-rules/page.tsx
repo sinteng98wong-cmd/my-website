@@ -10,10 +10,14 @@ export default async function PayoutRulesPage() {
   const role = (session?.user as any)?.role as string;
   if (!["SUPER_ADMIN", "FINANCE", "CLINIC_MANAGER"].includes(role)) redirect("/dashboard");
 
-  const [clinics, saved, savedScans] = await Promise.all([
+  const [clinics, saved, savedScans, doctorProfiles] = await Promise.all([
     prisma.clinic.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } }),
     (prisma as any).payoutScheme.findMany({ orderBy: [{ name: "asc" }] }).catch(() => []),
     (prisma as any).payoutScanRate.findMany({ orderBy: [{ code: "asc" }] }).catch(() => []),
+    prisma.doctorProfile.findMany({
+      include: { user: { select: { name: true, active: true } } },
+      orderBy: { user: { name: "asc" } },
+    }),
   ]);
 
   return (
@@ -39,6 +43,10 @@ export default async function PayoutRulesPage() {
           clinicId: s.clinicId, code: s.code, label: s.label, rate: Number(s.rate), active: s.active,
         }))}
         defaultScans={DEFAULT_SCAN_RATES}
+        doctors={doctorProfiles.filter(d => d.user.active).map(d => ({
+          id: d.id, name: d.user.name, type: d.type as string,
+          defaultRate: Number(d.defaultRate), dayRate: d.dayRate ? Number(d.dayRate) : null,
+        }))}
       />
     </div>
   );

@@ -24,6 +24,7 @@ type Scheme = {
 };
 
 type ScanRate = { clinicId?: string | null; code: string; label: string; rate: number; active?: boolean };
+type DoctorRate = { id: string; name: string; type: string; defaultRate: number; dayRate: number | null };
 
 interface Props {
   clinics:  { id: string; name: string }[];
@@ -31,9 +32,10 @@ interface Props {
   defaults: Omit<Scheme, "id" | "clinicId" | "active">[];
   savedScans:   ScanRate[];
   defaultScans: ScanRate[];
+  doctors:      DoctorRate[];
 }
 
-export function PayoutRulesClient({ clinics, saved, defaults, savedScans, defaultScans }: Props) {
+export function PayoutRulesClient({ clinics, saved, defaults, savedScans, defaultScans, doctors }: Props) {
   const router = useRouter();
   const [clinicId, setClinicId] = useState<string>(""); // "" = global defaults
 
@@ -85,6 +87,72 @@ export function PayoutRulesClient({ clinics, saved, defaults, savedScans, defaul
       ))}
 
       <ScanRatesCard key={`scans:${clinicId}`} clinicId={clinicId || null} rates={scanRates} onSaved={() => router.refresh()} />
+
+      <DoctorRatesCard doctors={doctors} onSaved={() => router.refresh()} />
+    </div>
+  );
+}
+
+// ─── Doctor personal commission rate editor ───────────────────────────────────
+
+function DoctorRatesCard({ doctors, onSaved }: { doctors: DoctorRate[]; onSaved: () => void }) {
+  const [rows, setRows] = useState(doctors.map(d => ({ ...d })));
+  const [busyId, setBusyId] = useState("");
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+
+  function setRow(i: number, patch: Partial<DoctorRate>) {
+    setRows(prev => prev.map((r, j) => j === i ? { ...r, ...patch } : r));
+  }
+
+  async function save(i: number) {
+    const d = rows[i];
+    setBusyId(d.id); setErr(""); setMsg("");
+    const res = await fetch(`/api/doctors/${d.id}/rate`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ defaultRate: d.defaultRate, dayRate: d.dayRate ?? 0 }),
+    });
+    setBusyId("");
+    if (!res.ok) { const x = await res.json(); setErr(`${d.name}: ${x.error ?? "Failed"}`); return; }
+    setMsg(`${d.name} saved`); onSaved();
+  }
+
+  return (
+    <div className="card p-5 space-y-4">
+      <div className="flex items-center gap-2">
+        <h3 className="font-semibold text-slate-900">Doctor Commission Rates</h3>
+        <span className="text-xs text-slate-400">each doctor&apos;s personal share % (applied to the day/month/case totals)</span>
+      </div>
+
+      <div className="grid grid-cols-[1fr_130px_150px_90px] gap-2 text-[10px] font-semibold text-slate-400 uppercase tracking-wide px-1">
+        <span>Doctor</span><span>Share % (defaultRate)</span><span>Day Rate (RM, floor)</span><span />
+      </div>
+      <div className="space-y-1.5">
+        {rows.map((d, i) => (
+          <div key={d.id} className="grid grid-cols-[1fr_130px_150px_90px] gap-2 items-center">
+            <div className="min-w-0">
+              <p className="text-sm text-slate-800 truncate">{d.name}</p>
+              <p className="text-[10px] text-slate-400">{d.type}</p>
+            </div>
+            <div className="relative">
+              <input type="number" min="0" max="100" step="0.5" value={d.defaultRate}
+                onChange={e => setRow(i, { defaultRate: Number(e.target.value) })}
+                className="form-input text-sm py-1.5 pr-6" />
+              <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs">%</span>
+            </div>
+            <input type="number" min="0" step="10" value={d.dayRate ?? 0}
+              onChange={e => setRow(i, { dayRate: Number(e.target.value) })}
+              className="form-input text-sm py-1.5" />
+            <button onClick={() => save(i)} disabled={busyId === d.id}
+              className="btn-primary text-xs disabled:opacity-40">
+              {busyId === d.id ? "…" : "Save"}
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {msg && <span className="text-xs text-green-600">{msg}</span>}
+      {err && <span className="text-xs text-red-600">{err}</span>}
     </div>
   );
 }

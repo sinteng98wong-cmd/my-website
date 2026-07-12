@@ -7,6 +7,7 @@ import { StaffCommissionTable }  from "./StaffCommissionTable";
 import { LocumPayoutTable, type LocumDoctorGroup } from "./LocumPayoutTable";
 import { DailySignoffPanel, type DayRow } from "./DailySignoffPanel";
 import { MonthlyCommissionPanel, type MonthlyData } from "./MonthlyCommissionPanel";
+import { CaseProgressPanel, type CaseRow } from "./CaseProgressPanel";
 import { getEffectiveSchemes, matchScheme, computeStageRelease, isScanCode, getEffectiveScanRates, scanFlatRate } from "@/services/locum-payout.service";
 import { redirect } from "next/navigation";
 import { Users, Calculator, Banknote, FileCheck, Wallet, BadgeCheck, type LucideIcon } from "lucide-react";
@@ -394,7 +395,10 @@ export default async function CommissionPage({
   }
 
   // ── Monthly commission summary (spreadsheet-style) ────────────────────
-  const payoutView = searchParams.payoutView === "monthly" ? "monthly" : "daily";
+  const payoutView: "daily" | "monthly" | "cases" =
+    searchParams.payoutView === "monthly" ? "monthly"
+    : searchParams.payoutView === "cases" ? "cases"
+    : "daily";
   let monthly: MonthlyData | null = null;
   if (tab === "locum" && signoffDoctorId && payoutView === "monthly") {
     const mStart = new Date(`${month}-01T00:00:00+08:00`);
@@ -490,6 +494,34 @@ export default async function CommissionPage({
     };
   }
 
+  // ── Case Progress rows (monthly, per-case weightage) ──────────────────
+  let caseRows: CaseRow[] = [];
+  if (tab === "locum" && signoffDoctorId && payoutView === "cases") {
+    caseRows = (locumLines as any[])
+      .filter(l => l.doctorProfile.id === signoffDoctorId && !isScanCode(l.treatment.treatmentType.code))
+      .map(l => {
+        const { bucket, accruedPct } = classify(l);
+        const billed = Number(l.billedAmount);
+        const labFee = Number(l.labFee);
+        const net    = Number(l.netPool);
+        const wt     = accruedPct ?? 100; // one-off (no stage scheme) counts fully
+        return {
+          id:              l.id,
+          patientName:     l.treatment.visit.patient.name,
+          patientRef:      l.treatment.visit.patient.patientRef,
+          treatmentName:   l.treatment.treatmentType.name,
+          planRef:         l.treatmentPlan?.planRef ?? null,
+          bucket,
+          billed,
+          labFee,
+          labFeeConfirmed: l.labFeeConfirmed,
+          net,
+          weightagePct:    wt,
+          gained:          Math.round(net * wt) / 100,
+        };
+      });
+  }
+
   // Summary stats
   const totalEntitled = locumGroups.reduce((s, g) => s + g.totalEntitled, 0);
   const totalReleased = locumGroups.reduce((s, g) => s + g.totalReleased, 0);
@@ -572,9 +604,30 @@ export default async function CommissionPage({
                   className={`px-4 py-2 transition-colors ${payoutView === "monthly" ? "bg-blue-600 text-white" : "bg-white text-slate-500 hover:bg-slate-50"}`}>
                   Monthly
                 </a>
+                <a href={`?tab=locum&month=${month}&view=${view}&payoutView=cases${signoffDoctorId ? `&signoffDoctor=${signoffDoctorId}` : ""}`}
+                  className={`px-4 py-2 transition-colors ${payoutView === "cases" ? "bg-blue-600 text-white" : "bg-white text-slate-500 hover:bg-slate-50"}`}>
+                  Cases
+                </a>
               </div>
 
-              {payoutView === "monthly" && monthly
+              {/* Doctor picker for Monthly/Cases (Daily has its own) */}
+              {canPickDoctor && payoutView !== "daily" && (
+                <form className="flex items-center gap-2">
+                  <input type="hidden" name="tab" value="locum" />
+                  <input type="hidden" name="month" value={month} />
+                  <input type="hidden" name="view" value={view} />
+                  <input type="hidden" name="payoutView" value={payoutView} />
+                  <label className="text-xs font-medium text-slate-600">Doctor</label>
+                  <select name="signoffDoctor" defaultValue={signoffDoctorId} className="form-input w-auto text-sm py-1.5">
+                    {signoffDoctors.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                  </select>
+                  <button type="submit" className="btn-secondary text-xs">View</button>
+                </form>
+              )}
+
+              {payoutView === "cases"
+                ? <CaseProgressPanel month={month} doctorName={signoffDoctorName} doctorRate={signoffDoctorRate} rows={caseRows} />
+                : payoutView === "monthly" && monthly
                 ? <MonthlyCommissionPanel month={month} doctorName={signoffDoctorName} data={monthly} />
                 : <DailySignoffPanel
                     day={day}
