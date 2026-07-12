@@ -660,8 +660,10 @@ model LabJob {
   labJobRef       String       @unique
   visitId         String
   visit           Visit        @relation(fields: [visitId], references: [id])
-  vendorId        String
-  vendor          LabVendor    @relation(fields: [vendorId], references: [id])
+  // Vendor is optional at creation — the doctor assigns the right lab after
+  // assessing the case (Lab section → job → assign vendor)
+  vendorId        String?
+  vendor          LabVendor?   @relation(fields: [vendorId], references: [id])
   clinicId        String
   clinic          Clinic       @relation("LabJobClinic", fields: [clinicId], references: [id])
   status          LabJobStatus @default(ORDERED)

@@ -117,7 +117,7 @@ export default async function LabPage({
                   <td className="px-4 py-3 text-slate-700">
                     {j.workDescription ?? j.treatments.map(t => t.treatmentType.name).join(", ")}
                   </td>
-                  <td className="px-4 py-3 text-slate-600">{j.vendor.name}</td>
+                  <td className="px-4 py-3 text-slate-600">{j.vendor?.name ?? <span className="text-amber-600 text-xs font-medium">Vendor TBD</span>}</td>
                   <td className="px-4 py-3 text-slate-500">{j.clinic.name}</td>
                   <td className="px-4 py-3 font-mono">{fmt(Number(j.estimatedFee))}</td>
                   <td className="px-4 py-3">

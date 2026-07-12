@@ -38,11 +38,12 @@ export default async function LabReconcilePage({
     prisma.labVendor.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
   ]);
 
-  // Group by vendor
+  // Group by vendor (jobs without an assigned vendor group under "Vendor TBD")
   const byVendor: Record<string, { vendor: any; jobs: typeof jobs }> = {};
   for (const j of jobs) {
-    if (!byVendor[j.vendorId]) byVendor[j.vendorId] = { vendor: j.vendor, jobs: [] };
-    byVendor[j.vendorId].jobs.push(j);
+    const key = j.vendorId ?? "__unassigned__";
+    if (!byVendor[key]) byVendor[key] = { vendor: j.vendor ?? { name: "Vendor TBD" }, jobs: [] };
+    byVendor[key].jobs.push(j);
   }
 
   // Totals

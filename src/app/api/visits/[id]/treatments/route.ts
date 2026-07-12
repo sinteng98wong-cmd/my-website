@@ -9,8 +9,9 @@ const AddSchema = z.object({
   doctorId:        z.string().min(1).optional(),
   billedAmount:    z.number().nonnegative(),
   subType:         z.string().optional(), // material / variant, e.g. PFM, Valplast
+  hasLab:          z.boolean().optional(), // category requires lab work (vendor may be TBD)
   labFee:          z.number().nonnegative().default(0),
-  // Lab job fields (only if labFee > 0)
+  // Lab job fields — vendor is optional; the doctor assigns it after assessing the case
   labVendorId:     z.string().min(1).optional(),
   labDescription:  z.string().optional(),
   labExpectedDate: z.string().optional(),
@@ -55,8 +56,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     },
   });
 
-  // If lab fee, create a LabJob
-  if (d.labFee > 0 && d.labVendorId) {
+  // Lab-work categories always get a LabJob — even without a vendor yet.
+  // The job tracks the pending invoice; the doctor assigns the vendor after
+  // assessing the case (Lab section).
+  if (d.hasLab || d.labFee > 0 || d.labVendorId) {
     const count  = await prisma.labJob.count();
     const labJobRef = `LJ-${String(count + 1).padStart(5, "0")}`;
 
@@ -65,7 +68,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         labJobRef,
         visitId:         params.id,
         clinicId:        visit.clinicId,
-        vendorId:        d.labVendorId,
+        vendorId:        d.labVendorId ?? null,
         estimatedFee:    d.labEstimatedFee ?? d.labFee,
         workDescription: d.labDescription ?? null,
         expectedDate:    d.labExpectedDate ? new Date(d.labExpectedDate) : null,

@@ -40,7 +40,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const {
       status, sentDate, receivedDate, fittedDate,
       invoiceDate, invoiceNumber, invoiceAmount,
-      paidToVendor, paidDate, notes, expectedDate,
+      paidToVendor, paidDate, notes, expectedDate, vendorId,
     } = body;
 
     const existing = await prisma.labJob.findUnique({ where: { id: params.id } });
@@ -49,6 +49,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const updated = await prisma.labJob.update({
       where: { id: params.id },
       data: {
+        ...(vendorId     ? { vendorId }                             : {}),
         ...(status       ? { status }                               : {}),
         ...(sentDate     ? { sentDate: new Date(sentDate) }         : {}),
         ...(expectedDate ? { expectedDate: new Date(expectedDate) } : {}),

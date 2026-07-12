@@ -21,6 +21,7 @@ export function LabJobClient({ job: initial, vendors }: { job: Job; vendors: Ven
   const [job, setJob]  = useState<Job>(initial);
   const [saving, setSaving] = useState(false);
   const [error, setError]   = useState("");
+  const [vendorPick, setVendorPick] = useState("");
 
   // Status update form
   const [statusForm, setStatusForm] = useState({
@@ -82,7 +83,7 @@ export function LabJobClient({ job: initial, vendors }: { job: Job; vendors: Ven
           <Link href="/lab" className="text-sm text-slate-500 hover:text-slate-700">← Lab Work</Link>
           <h1 className="page-title mt-2">{job.labJobRef}</h1>
           <p className="text-sm text-slate-500 mt-0.5">
-            {patient?.name} · {job.vendor.name} · {job.clinic.name}
+            {patient?.name} · {job.vendor?.name ?? "Vendor TBD"} · {job.clinic.name}
           </p>
         </div>
         <span className={`badge ${
@@ -175,15 +176,33 @@ export function LabJobClient({ job: initial, vendors }: { job: Job; vendors: Ven
           </div>
         </div>
 
-        {/* Lab Vendor info */}
+        {/* Lab Vendor info — assignable after case assessment */}
         <div className="card p-5">
           <h2 className="text-sm font-semibold text-slate-900 mb-3">Lab Vendor</h2>
+          {!job.vendor && (
+            <div className="mb-3 space-y-2">
+              <p className="text-xs text-amber-600">No vendor assigned yet — choose one after assessing the case:</p>
+              <div className="flex gap-2">
+                <select className="form-input text-sm flex-1" value={vendorPick} onChange={e => setVendorPick(e.target.value)}>
+                  <option value="">Select vendor…</option>
+                  {vendors.map((v: any) => <option key={v.id} value={v.id}>{v.name}</option>)}
+                </select>
+                <button
+                  onClick={() => vendorPick && save({ vendorId: vendorPick })}
+                  disabled={saving || !vendorPick}
+                  className="btn-primary text-xs disabled:opacity-40"
+                >
+                  Assign
+                </button>
+              </div>
+            </div>
+          )}
           <dl className="space-y-2.5 text-sm">
             {[
-              { label: "Name",    value: job.vendor.name },
-              { label: "Contact", value: job.vendor.contactName ?? "—" },
-              { label: "Phone",   value: job.vendor.phone ?? "—" },
-              { label: "Email",   value: job.vendor.email ?? "—" },
+              { label: "Name",    value: job.vendor?.name ?? "— To be decided —" },
+              { label: "Contact", value: job.vendor?.contactName ?? "—" },
+              { label: "Phone",   value: job.vendor?.phone ?? "—" },
+              { label: "Email",   value: job.vendor?.email ?? "—" },
             ].map(r => (
               <div key={r.label}>
                 <dt className="text-xs text-slate-500">{r.label}</dt>
@@ -292,7 +311,7 @@ export function LabJobClient({ job: initial, vendors }: { job: Job; vendors: Ven
           <div className="flex items-start justify-between mb-1">
             <h2 className="text-sm font-semibold text-slate-900">Commission Impact</h2>
             <div className="text-xs text-slate-500 text-right">
-              <span className="font-medium text-slate-700">{job.vendor.name}</span>
+              <span className="font-medium text-slate-700">{job.vendor?.name ?? "Vendor TBD"}</span>
               {job.invoiceNumber && (
                 <span className="ml-2 font-mono text-slate-600">#{job.invoiceNumber}</span>
               )}

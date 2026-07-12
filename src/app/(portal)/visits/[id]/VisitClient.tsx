@@ -40,7 +40,7 @@ type Treatment = {
   doctor: { user: { id: string; name: string } } | null;
   billedAmount: number;
   labFee: number;
-  labJob: { id: string; labJobRef: string; status: string; vendor: { name: string } } | null;
+  labJob: { id: string; labJobRef: string; status: string; vendor: { name: string } | null } | null;
 };
 type Invoice = {
   id: string; invoiceRef: string; total: number; collectedAt: string | null;
@@ -144,7 +144,6 @@ export function VisitClient({
     e.preventDefault();
     setError("");
     if (!tx.treatmentTypeId) { setError("Select a treatment type"); return; }
-    if (tx.hasLab && !tx.labVendorId) { setError("Select a lab vendor for the lab job"); return; }
 
     setAddingTx(true);
     const res = await fetch(`/api/visits/${visit.id}/treatments`, {
@@ -154,8 +153,9 @@ export function VisitClient({
         doctorId:        tx.doctorId        || undefined,
         billedAmount:    parseFloat(tx.billedAmount) || 0,
         subType:         tx.subType         || undefined,
+        hasLab:          tx.hasLab,
         labFee:          tx.hasLab ? (parseFloat(tx.labEstimatedFee) || 0) : 0,
-        labVendorId:     tx.hasLab ? tx.labVendorId    : undefined,
+        labVendorId:     tx.hasLab ? (tx.labVendorId || undefined) : undefined,
         labDescription:  tx.hasLab ? (tx.labDescription || [tx.subType, activeCategory?.types.find(t => t.id === tx.treatmentTypeId)?.name].filter(Boolean).join(" ")) : undefined,
         labEstimatedFee: tx.hasLab ? parseFloat(tx.labEstimatedFee) : undefined,
         labExpectedDate: tx.hasLab ? tx.labExpectedDate : undefined,
@@ -319,7 +319,7 @@ export function VisitClient({
                       <Link href={`/lab/${t.labJob.id}`} className="flex items-center gap-1.5 text-xs">
                         <span className="font-mono text-blue-600 hover:underline">{t.labJob.labJobRef}</span>
                         <span className={LAB_STATUS[t.labJob.status] ?? "badge-slate"}>{t.labJob.status.replace("_"," ")}</span>
-                        <span className="text-slate-400">{t.labJob.vendor.name}</span>
+                        <span className="text-slate-400">{t.labJob.vendor?.name ?? "Vendor TBD"}</span>
                       </Link>
                     ) : <span className="text-slate-300">—</span>}
                   </td>
@@ -396,9 +396,9 @@ export function VisitClient({
             {tx.hasLab && (
               <div className="grid grid-cols-2 gap-3 pl-6 border-l-2 border-blue-200">
                 <div>
-                  <label className="form-label">Lab Vendor <span className="text-red-500">*</span></label>
+                  <label className="form-label">Lab Vendor <span className="text-slate-400 font-normal">(optional — assign after case assessment)</span></label>
                   <select className="form-input" value={tx.labVendorId} onChange={e => setTx(f => ({ ...f, labVendorId: e.target.value }))}>
-                    <option value="">Select vendor…</option>
+                    <option value="">— To be decided —</option>
                     {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
                   </select>
                 </div>
