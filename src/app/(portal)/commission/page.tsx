@@ -7,6 +7,7 @@ import { StaffCommissionTable }  from "./StaffCommissionTable";
 import { LocumPayoutTable, type LocumDoctorGroup } from "./LocumPayoutTable";
 import { DailySignoffPanel, type DayRow } from "./DailySignoffPanel";
 import { getEffectiveSchemes, matchScheme, computeStageRelease, isScanCode } from "@/services/locum-payout.service";
+import { redirect } from "next/navigation";
 import { Users, Calculator, Banknote, FileCheck, Wallet, BadgeCheck, type LucideIcon } from "lucide-react";
 
 const RM = (n: number) =>
@@ -25,6 +26,11 @@ export default async function CommissionPage({
   const session = await getServerSession(authOptions);
   const role    = (session?.user as any)?.role   as string;
   const userId  = (session?.user as any)?.id     as string;
+
+  // Commission entitlement is not for counter/clinical staff. Counters get the
+  // cash-only reconciliation page; storekeepers have no business here.
+  if (["RECEPTIONIST", "NURSE"].includes(role)) redirect("/commission/counter-daily");
+  if (!["SUPER_ADMIN", "FINANCE", "CLINIC_MANAGER", "DOCTOR"].includes(role)) redirect("/dashboard");
 
   const month       = searchParams.month ?? new Date().toISOString().slice(0, 7);
   const tabParam    = searchParams.tab ?? "locum";
