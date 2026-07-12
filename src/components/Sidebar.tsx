@@ -142,7 +142,6 @@ const NAV: NavEntry[] = [
     key:   "admin",
     label: "Admin",
     children: [
-      { key: "stage-templates", label: "Stage Templates", href: "/admin/stage-templates",   superAdminOnly: true },
       { key: "companies",   label: "Companies",          href: "/admin/companies",         superAdminOnly: true },
       { key: "users",       label: "Users",              href: "/users",                   superAdminOnly: true },
       { key: "patient-src", label: "Patient Sources",    href: "/admin/patient-sources",   superAdminOnly: true },

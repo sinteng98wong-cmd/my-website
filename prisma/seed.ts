@@ -1282,16 +1282,14 @@ async function main() {
 
   // Treatment Stages
   const stagesData = [
-    // Plan 1 — RCT
-    { id: "ts-1-1", planId: plan1.id, templateId: "tst-rct-1", name: "Access Opening & Pulp Removal",  order: 1, status: "COMPLETED" as const, cost: 150, completedAt: completedAt14 },
-    { id: "ts-1-2", planId: plan1.id, templateId: "tst-rct-2", name: "Cleaning & Shaping (BMP)",        order: 2, status: "IN_PROGRESS" as const, cost: 200, completedAt: null },
-    { id: "ts-1-3", planId: plan1.id, templateId: "tst-rct-3", name: "Obturation (Canal Filling)",      order: 3, status: "PENDING" as const, cost: 200, completedAt: null },
-    { id: "ts-1-4", planId: plan1.id, templateId: "tst-rct-4", name: "Post & Core Build-Up",            order: 4, status: "PENDING" as const, cost: 250, completedAt: null },
-    { id: "ts-1-5", planId: plan1.id, templateId: "tst-rct-5", name: "Crown Cementation",               order: 5, status: "PENDING" as const, cost: 600, completedAt: null },
-    // Plan 2 — Crown
-    { id: "ts-2-1", planId: plan2.id, templateId: "tst-crn-1", name: "Tooth Preparation & Impression",  order: 1, status: "COMPLETED" as const, cost: 300, completedAt: completedAt10 },
-    { id: "ts-2-2", planId: plan2.id, templateId: "tst-crn-2", name: "Crown Try-In",                    order: 2, status: "IN_PROGRESS" as const, cost: 0,   completedAt: null },
-    { id: "ts-2-3", planId: plan2.id, templateId: "tst-crn-3", name: "Crown Cementation",               order: 3, status: "PENDING" as const, cost: 600, completedAt: null },
+    // Plan 1 — RCT (aligned to the RCT payout scheme: 15 / 35 / 35 / 15)
+    { id: "ts-1-1", planId: plan1.id, name: "Access Cavity",     order: 1, status: "COMPLETED" as const,   cost: 180, completedAt: completedAt14 },
+    { id: "ts-1-2", planId: plan1.id, name: "Bio Prep",          order: 2, status: "IN_PROGRESS" as const, cost: 420, completedAt: null },
+    { id: "ts-1-3", planId: plan1.id, name: "Canal Seal",        order: 3, status: "PENDING" as const,     cost: 420, completedAt: null },
+    { id: "ts-1-4", planId: plan1.id, name: "Permanent Filling", order: 4, status: "PENDING" as const,     cost: 180, completedAt: null },
+    // Plan 2 — Crown (aligned to the Crown/Bridge scheme: Prep 65 / Issue 35)
+    { id: "ts-2-1", planId: plan2.id, name: "Prep",  order: 1, status: "COMPLETED" as const,   cost: 1170, completedAt: completedAt10 },
+    { id: "ts-2-2", planId: plan2.id, name: "Issue", order: 2, status: "IN_PROGRESS" as const, cost: 630,  completedAt: null },
     // Plan 3 — Implant
     { id: "ts-3-1", planId: plan3.id, templateId: "tst-imp-1", name: "Consultation & Assessment",        order: 1, status: "COMPLETED" as const, cost: 100,  completedAt: completedAt120 },
     { id: "ts-3-2", planId: plan3.id, templateId: "tst-imp-2", name: "Implant Placement (Surgery)",      order: 2, status: "COMPLETED" as const, cost: 2500, completedAt: completedAt90 },

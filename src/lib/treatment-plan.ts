@@ -44,12 +44,40 @@ export async function createPlanFromTemplate(params: {
   notes?:          string;
   createdById:     string;
 }) {
-  const templates = await prisma.treatmentStageTemplate.findMany({
-    where: { treatmentTypeId: params.treatmentTypeId, isActive: true },
-    orderBy: { order: "asc" },
-  });
+  const [templates, treatmentType] = await Promise.all([
+    prisma.treatmentStageTemplate.findMany({
+      where: { treatmentTypeId: params.treatmentTypeId, isActive: true },
+      orderBy: { order: "asc" },
+    }),
+    prisma.treatmentType.findUnique({ where: { id: params.treatmentTypeId }, select: { code: true, defaultPrice: true } }),
+  ]);
 
-  const subtotal = templates.reduce((s, t) => s + Number(t.defaultCost ?? 0), 0);
+  // Total to price the plan by (preserve existing pricing: template costs, else the type price)
+  const templateTotal = templates.reduce((s, t) => s + Number(t.defaultCost ?? 0), 0);
+  const total = templateTotal > 0 ? templateTotal : Number(treatmentType?.defaultPrice ?? 0);
+
+  // Prefer the payout scheme's weighted stages so the stages a doctor/counter
+  // completes are exactly the weighted stages (Payout Rules is the source of
+  // truth). Fall back to clinical templates when no scheme matches.
+  const { getEffectiveSchemes, matchScheme } = await import("@/services/locum-payout.service");
+  const schemes = await getEffectiveSchemes(params.clinicId).catch(() => []);
+  const scheme  = treatmentType ? matchScheme(schemes, treatmentType.code) : null;
+
+  const stageRows = scheme && scheme.stages.length > 0
+    ? scheme.stages.map((s, i) => ({
+        name:  s.name,
+        order: i + 1,
+        cost:  Math.round(total * s.percent) / 100, // apportion the total by weightage
+      }))
+    : templates.map(t => ({
+        name:        t.name,
+        description: t.description,
+        order:       t.order,
+        cost:        Number(t.defaultCost ?? 0),
+        templateId:  t.id,
+      }));
+
+  const subtotal = stageRows.reduce((s, r) => s + Number(r.cost), 0);
   const discounted = Math.max(0, subtotal - params.discount);
   const totalAmount = Math.round(discounted * 100) / 100;
   const planRef = await generateTreatmentPlanRef();
@@ -70,15 +98,7 @@ export async function createPlanFromTemplate(params: {
       depositRequired: params.depositRequired,
       notes:           params.notes,
       createdById:     params.createdById,
-      stages: {
-        create: templates.map(t => ({
-          name:        t.name,
-          description: t.description,
-          order:       t.order,
-          cost:        t.defaultCost ?? 0,
-          templateId:  t.id,
-        })),
-      },
+      stages: { create: stageRows },
     },
     include: { stages: { orderBy: { order: "asc" } } },
   });
