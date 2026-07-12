@@ -45,7 +45,7 @@ export default async function CounterDailyPage({
       billedAmount: true,
       collectedAmount: true,
       treatmentType: { select: { name: true } },
-      doctor: { select: { user: { select: { name: true } } } },
+      doctor: { select: { id: true, user: { select: { name: true } } } },
       visit: { select: { patient: { select: { name: true, patientRef: true } } } },
       locumPayoutLines: {
         select: { id: true, counterVerifiedAt: true, doctorVerifiedAt: true, status: true },
@@ -65,7 +65,8 @@ export default async function CounterDailyPage({
       lineIds:       lines.map(l => l.id),
       patientName:   t.visit.patient.name,
       patientRef:    t.visit.patient.patientRef,
-      doctorName:    t.doctor?.user.name ?? "—",
+      doctorId:      t.doctor?.id ?? "unassigned",
+      doctorName:    t.doctor?.user.name ?? "Unassigned",
       treatmentName: t.treatmentType.name,
       billed:        Number(t.billedAmount),
       collected:     Number(t.collectedAmount),
