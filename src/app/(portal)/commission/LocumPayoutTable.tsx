@@ -75,7 +75,7 @@ interface Props {
 
 // ─── Workflow buckets (status view) ──────────────────────────────────────────
 
-const BUCKETS: { key: string; label: string; hint: string; badge: string }[] = [
+export const BUCKETS: { key: string; label: string; hint: string; badge: string }[] = [
   { key: "pending_verification", label: "Pending Verification",    hint: "Counter / doctor verification not done yet",             badge: "badge-slate"  },
   { key: "pending_lab",          label: "Pending Lab Invoice",     hint: "Waiting for the physical lab invoice to be logged",      badge: "badge-amber"  },
   { key: "pending_completion",   label: "Pending Completion",      hint: "Case stages not finished — funds stay locked",           badge: "badge-amber"  },
@@ -102,14 +102,14 @@ const CATEGORY_BADGE: Record<string, string> = {
   ORTHO_DEBONDING: "badge-purple",
   ALIGNER:         "badge-cyan",
 };
-const STATUS_BADGE: Record<string, string> = {
+export const STATUS_BADGE: Record<string, string> = {
   ENTITLED:                 "badge-slate",
   LOCKED_PENDING_COMPLETION:"badge-amber",
   PENDING_RELEASE:          "badge-blue",
   PAID:                     "badge-green",
   VOIDED:                   "badge-red",
 };
-const STATUS_LABEL: Record<string, string> = {
+export const STATUS_LABEL: Record<string, string> = {
   ENTITLED:                 "Entitled",
   LOCKED_PENDING_COMPLETION:"Locked",
   PENDING_RELEASE:          "Pending Release",
@@ -119,7 +119,7 @@ const STATUS_LABEL: Record<string, string> = {
 
 // ─── Step progress dots ───────────────────────────────────────────────────────
 
-function StepDots({ line }: { line: LocumLine }) {
+export function StepDots({ line }: { line: LocumLine }) {
   const needsLab = !!line.treatment.labJobId;
   const steps = [
     { label: "Counter", done: !!line.counterVerifiedAt },
@@ -150,7 +150,7 @@ function StepDots({ line }: { line: LocumLine }) {
 
 // ─── Next-action button ───────────────────────────────────────────────────────
 
-function nextAction(line: LocumLine, role: string, ownDoctorId: string | null) {
+export function nextAction(line: LocumLine, role: string, ownDoctorId: string | null) {
   if (line.status === "PAID" || line.status === "VOIDED") return null;
 
   const isOwnLine = ownDoctorId !== null; // for doctor role, page already filters to own lines
@@ -175,7 +175,7 @@ function nextAction(line: LocumLine, role: string, ownDoctorId: string | null) {
 
 // ─── Force-release modal ──────────────────────────────────────────────────────
 
-function ForceReleaseModal({
+export function ForceReleaseModal({
   lineId, onDone, onCancel,
 }: { lineId: string; onDone: () => void; onCancel: () => void }) {
   const [reason, setReason] = useState("");
@@ -234,7 +234,7 @@ function ForceReleaseModal({
 
 // ─── Lab fee prompt ───────────────────────────────────────────────────────────
 
-function LabFeeModal({
+export function LabFeeModal({
   lineId, estimatedFee, onDone, onCancel,
 }: { lineId: string; estimatedFee: number; onDone: () => void; onCancel: () => void }) {
   const [fee,   setFee]   = useState(estimatedFee > 0 ? String(estimatedFee) : "");
@@ -290,7 +290,7 @@ function LabFeeModal({
 
 // ─── Sub-type / tooth details modal ──────────────────────────────────────────
 
-function DetailsModal({
+export function DetailsModal({
   line, onDone, onCancel,
 }: { line: LocumLine; onDone: () => void; onCancel: () => void }) {
   const [subType, setSubType]       = useState(line.subType ?? "");

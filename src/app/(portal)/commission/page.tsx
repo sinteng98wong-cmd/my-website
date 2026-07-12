@@ -4,10 +4,10 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { StaffCommissionTable }  from "./StaffCommissionTable";
-import { LocumPayoutTable, type LocumDoctorGroup } from "./LocumPayoutTable";
+import { type LocumDoctorGroup } from "./LocumPayoutTable";
 import { DailySignoffPanel, type DayRow } from "./DailySignoffPanel";
 import { MonthlyCommissionPanel, type MonthlyData } from "./MonthlyCommissionPanel";
-import { CaseProgressPanel, type CaseRow } from "./CaseProgressPanel";
+import { CaseProgressPanel } from "./CaseProgressPanel";
 import { getEffectiveSchemes, matchScheme, computeStageRelease, isScanCode, getEffectiveScanRates, scanFlatRate } from "@/services/locum-payout.service";
 import { redirect } from "next/navigation";
 import { Users, Calculator, Banknote, FileCheck, Wallet, BadgeCheck, type LucideIcon } from "lucide-react";
@@ -494,33 +494,11 @@ export default async function CommissionPage({
     };
   }
 
-  // ── Case Progress rows (monthly, per-case weightage) ──────────────────
-  let caseRows: CaseRow[] = [];
-  if (tab === "locum" && signoffDoctorId && payoutView === "cases") {
-    caseRows = (locumLines as any[])
-      .filter(l => l.doctorProfile.id === signoffDoctorId && !isScanCode(l.treatment.treatmentType.code))
-      .map(l => {
-        const { bucket, accruedPct } = classify(l);
-        const billed = Number(l.billedAmount);
-        const labFee = Number(l.labFee);
-        const net    = Number(l.netPool);
-        const wt     = accruedPct ?? 100; // one-off (no stage scheme) counts fully
-        return {
-          id:              l.id,
-          patientName:     l.treatment.visit.patient.name,
-          patientRef:      l.treatment.visit.patient.patientRef,
-          treatmentName:   l.treatment.treatmentType.name,
-          planRef:         l.treatmentPlan?.planRef ?? null,
-          bucket,
-          billed,
-          labFee,
-          labFeeConfirmed: l.labFeeConfirmed,
-          net,
-          weightagePct:    wt,
-          gained:          Math.round(net * wt) / 100,
-        };
-      });
-  }
+  // ── Case Progress: the selected doctor's month cases (full lines, non-scan) ─
+  const caseLines = (tab === "locum" && signoffDoctorId && payoutView === "cases")
+    ? (locumGroups.find(g => g.doctorProfileId === signoffDoctorId)?.lines ?? [])
+        .filter(l => !isScanCode(l.treatment.treatmentType.code))
+    : [];
 
   // Summary stats
   const totalEntitled = locumGroups.reduce((s, g) => s + g.totalEntitled, 0);
@@ -626,7 +604,16 @@ export default async function CommissionPage({
               )}
 
               {payoutView === "cases"
-                ? <CaseProgressPanel month={month} doctorName={signoffDoctorName} doctorRate={signoffDoctorRate} rows={caseRows} />
+                ? <CaseProgressPanel
+                    month={month}
+                    doctorName={signoffDoctorName}
+                    doctorRate={signoffDoctorRate}
+                    role={role}
+                    ownDoctorId={ownDoctorProfileId}
+                    doctorProfileId={signoffDoctorId}
+                    lines={caseLines}
+                    stmt={stmtByDoctor[signoffDoctorId]}
+                  />
                 : payoutView === "monthly" && monthly
                 ? <MonthlyCommissionPanel month={month} doctorName={signoffDoctorName} data={monthly} />
                 : <DailySignoffPanel
@@ -644,14 +631,6 @@ export default async function CommissionPage({
                   />}
             </>
           )}
-          <LocumPayoutTable
-            groups={locumGroups}
-            month={month}
-            role={role}
-            view={view}
-            ownDoctorId={ownDoctorProfileId}
-            stmtByDoctor={stmtByDoctor}
-          />
         </>
       )}
 
