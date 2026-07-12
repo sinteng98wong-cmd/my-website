@@ -132,6 +132,7 @@ model Clinic {
   treatmentPlans       TreatmentPlan[]
   consentRequests      ConsentRequest[]
   locumPayoutLines     LocumPayoutLine[]
+  payoutSchemes        PayoutScheme[]
 
   // Branch contact info
   address    String?
@@ -2670,6 +2671,10 @@ model LocumPayoutLine {
   treatmentPlan    TreatmentPlan?        @relation(fields: [treatmentPlanId], references: [id])
   treatmentStageId String?               // specific stage that triggered this line
 
+  // Clinical detail for the payout listing
+  subType          String?               // material / variant, e.g. "PFM", "Valplast"
+  toothCodes       String?               // e.g. "16" or "11,12"
+
   notes            String?
   createdAt        DateTime              @default(now())
   updatedAt        DateTime              @updatedAt
@@ -2678,4 +2683,26 @@ model LocumPayoutLine {
   @@index([doctorProfileId, month])
   @@index([status])
   @@index([clinicId, month])
+}
+
+// ── Payout stage-release schemes (configurable per clinic) ─────────────────
+// Defines how a case's entitlement is released stage-by-stage, e.g.
+// RCT: Access Cavity 15% → Bio Prep 35% → Canal Seal 35% → Permanent Filling 15%
+// stages JSON: [{ name, percent, requiresLabInvoice?, paymentThresholdPct?, requiresCaseComplete? }]
+
+model PayoutScheme {
+  id             String   @id @default(cuid())
+  clinicId       String?  // null = global default; a clinic row overrides the global one with the same name
+  clinic         Clinic?  @relation(fields: [clinicId], references: [id])
+  name           String   // "RCT", "Denture", "Crown / Bridge", "Ortho", "Aligner"
+  matchCodes     String[] // TreatmentType.code / subType patterns (case-insensitive substring)
+  subTypes       String[] // selectable variants, e.g. ["PFM","Zirconia"] or ["Valplast","Acrylic"]
+  paymentTracked Boolean  @default(false) // release follows patient payment progress instead of stages
+  stages         Json     // ordered stage rules; percents should sum to 100
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([clinicId, name])
+  @@index([clinicId])
 }

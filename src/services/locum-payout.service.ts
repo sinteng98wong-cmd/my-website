@@ -61,6 +61,196 @@ export function classifyLocumTreatment(treatmentTypeCode: string): LocumTreatmen
   return "ONE_OFF";
 }
 
+// ─── Stage-release schemes ───────────────────────────────────────────────────
+// A scheme defines how a case's entitlement is released stage-by-stage.
+// Schemes are configurable per clinic (PayoutScheme table); these defaults
+// apply until a clinic saves its own.
+
+export interface StageRule {
+  name:    string;
+  percent: number;                 // % of the case entitlement this stage releases
+  requiresLabInvoice?:  boolean;   // physical lab invoice must be logged first
+  paymentThresholdPct?: number;    // patient must have paid ≥ this % of the package
+  requiresCaseComplete?: boolean;  // whole treatment plan must be COMPLETED
+}
+
+export interface PayoutSchemeDef {
+  name:           string;
+  matchCodes:     string[];        // matched against TreatmentType.code and line subType
+  subTypes:       string[];        // selectable variants shown in the UI
+  paymentTracked: boolean;         // release follows patient payment % instead of stages
+  stages:         StageRule[];
+}
+
+export const DEFAULT_SCHEMES: PayoutSchemeDef[] = [
+  {
+    name: "RCT",
+    matchCodes: ["RCT", "ENDO", "ROOT", "PULP", "PULPOTOMY", "PULPECTOMY"],
+    subTypes: ["Anterior", "Premolar", "Molar", "Retreatment"],
+    paymentTracked: false,
+    stages: [
+      { name: "Access Cavity",     percent: 15 },
+      { name: "Bio Prep",          percent: 35 },
+      { name: "Canal Seal",        percent: 35 },
+      { name: "Permanent Filling", percent: 15 },
+    ],
+  },
+  {
+    name: "Denture",
+    matchCodes: ["DENTURE", "DEN", "VALPLAST"],
+    subTypes: ["Acrylic", "Valplast", "Cobalt Chrome", "Flexible"],
+    paymentTracked: false,
+    stages: [
+      { name: "Impression", percent: 25 },
+      { name: "Bite",       percent: 25 },
+      { name: "Try-In",     percent: 25 },
+      { name: "Issue",      percent: 25 },
+    ],
+  },
+  {
+    name: "Crown / Bridge",
+    matchCodes: ["CROWN", "CR", "BRIDGE", "BR", "VENEER", "CERAMIC", "PFM", "ZIRCONIA", "INLAY", "ONLAY"],
+    subTypes: ["PFM", "Zirconia", "Emax", "Full Metal", "Composite"],
+    paymentTracked: false,
+    stages: [
+      { name: "Prep",  percent: 65 },
+      { name: "Issue", percent: 35 },
+    ],
+  },
+  {
+    name: "Ortho",
+    matchCodes: ["ORTHO", "BRACES", "BOND", "BRACKET", "DEBOND", "FIXED_APPLIANCE"],
+    subTypes: ["Metal", "Ceramic", "Self-Ligating"],
+    // Some branches release progressively against patient payment instead —
+    // toggle paymentTracked in Settings › Payout Rules for those clinics.
+    paymentTracked: false,
+    stages: [
+      { name: "Bonding", percent: 50 },
+      { name: "Debond",  percent: 50, requiresCaseComplete: true },
+    ],
+  },
+  {
+    name: "Aligner",
+    matchCodes: ["ALIGNER", "ALIGN", "INVISALIGN", "CLEAR_ALIGNER"],
+    subTypes: ["Invisalign", "Angel Aligner", "Clear Correct", "In-House"],
+    paymentTracked: false,
+    stages: [
+      { name: "Bonding", percent: 30, requiresLabInvoice: true, paymentThresholdPct: 70 },
+      { name: "Debond",  percent: 70, requiresCaseComplete: true },
+    ],
+  },
+];
+
+/**
+ * Effective schemes for a clinic: defaults ← global DB rows ← clinic DB rows,
+ * merged by scheme name. Inactive DB rows remove the scheme entirely.
+ */
+export async function getEffectiveSchemes(
+  clinicId: string | null,
+  p: PrismaClient = defaultPrisma,
+): Promise<PayoutSchemeDef[]> {
+  const rows: any[] = await (p as any).payoutScheme.findMany({
+    where: { OR: [{ clinicId: null }, ...(clinicId ? [{ clinicId }] : [])] },
+  }).catch(() => []);
+
+  const byName = new Map<string, PayoutSchemeDef | null>();
+  for (const d of DEFAULT_SCHEMES) byName.set(d.name, d);
+
+  const apply = (row: any) => {
+    byName.set(row.name, row.active ? {
+      name:           row.name,
+      matchCodes:     row.matchCodes ?? [],
+      subTypes:       row.subTypes ?? [],
+      paymentTracked: !!row.paymentTracked,
+      stages:         (row.stages ?? []) as StageRule[],
+    } : null);
+  };
+  rows.filter(r => r.clinicId === null).forEach(apply);   // global overrides defaults
+  rows.filter(r => r.clinicId !== null).forEach(apply);   // clinic overrides global
+
+  return Array.from(byName.values()).filter((s): s is PayoutSchemeDef => s !== null);
+}
+
+/** Find the scheme matching a treatment code (and optional subType). */
+export function matchScheme(
+  schemes: PayoutSchemeDef[],
+  treatmentTypeCode: string,
+  subType?: string | null,
+): PayoutSchemeDef | null {
+  for (const s of schemes) {
+    if (matchesAny(treatmentTypeCode, s.matchCodes)) return s;
+    if (subType && matchesAny(subType, s.matchCodes)) return s;
+  }
+  return null;
+}
+
+export interface StageReleaseContext {
+  /** Plan stages in order with completion status */
+  planStages:      { status: string }[];
+  planStatus:      string | null;
+  totalPackage:    number;
+  totalCollected:  number;
+  labFeeConfirmed: boolean;
+}
+
+export interface StageReleaseResult {
+  /** 0–100: % of the entitlement currently releasable */
+  releasablePct: number;
+  breakdown: { name: string; percent: number; satisfied: boolean; blockedBy?: string }[];
+}
+
+/**
+ * Compute how much of the entitlement is releasable right now under a scheme.
+ * Scheme stage i maps to the plan's i-th stage (by order); a stage releases its
+ * percent once that plan stage is COMPLETED/SKIPPED and its extra conditions
+ * (lab invoice, payment threshold, case complete) are met. If the whole plan is
+ * COMPLETED, unmatched stages release too (still subject to their conditions).
+ * paymentTracked schemes ignore stages: releasable % = patient payment %.
+ */
+export function computeStageRelease(
+  scheme: PayoutSchemeDef,
+  ctx: StageReleaseContext,
+): StageReleaseResult {
+  if (scheme.paymentTracked) {
+    const pct = ctx.totalPackage > 0
+      ? Math.min(100, (ctx.totalCollected / ctx.totalPackage) * 100)
+      : 0;
+    return {
+      releasablePct: Math.round(pct * 100) / 100,
+      breakdown: [{ name: "Patient payment progress", percent: Math.round(pct * 100) / 100, satisfied: pct > 0 }],
+    };
+  }
+
+  const caseComplete = ctx.planStatus === "COMPLETED";
+  const paidPct      = ctx.totalPackage > 0 ? (ctx.totalCollected / ctx.totalPackage) * 100 : 0;
+
+  let releasablePct = 0;
+  const breakdown: StageReleaseResult["breakdown"] = [];
+
+  scheme.stages.forEach((rule, i) => {
+    const planStage = ctx.planStages[i];
+    const stageDone = caseComplete ||
+      (planStage ? (planStage.status === "COMPLETED" || planStage.status === "SKIPPED") : false);
+
+    let blockedBy: string | undefined;
+    if (!stageDone) {
+      blockedBy = planStage ? `stage "${rule.name}" not completed` : "no matching plan stage";
+    } else if (rule.requiresLabInvoice && !ctx.labFeeConfirmed) {
+      blockedBy = "lab invoice not logged";
+    } else if (rule.paymentThresholdPct && paidPct < rule.paymentThresholdPct) {
+      blockedBy = `patient paid ${paidPct.toFixed(1)}% — needs ≥ ${rule.paymentThresholdPct}%`;
+    } else if (rule.requiresCaseComplete && !caseComplete) {
+      blockedBy = "case not completed";
+    }
+
+    const satisfied = !blockedBy;
+    if (satisfied) releasablePct += rule.percent;
+    breakdown.push({ name: rule.name, percent: rule.percent, satisfied, blockedBy });
+  });
+
+  return { releasablePct: Math.min(100, releasablePct), breakdown };
+}
+
 // ─── Pure math helpers ───────────────────────────────────────────────────────
 
 export interface CommissionInput {
@@ -198,7 +388,7 @@ async function _fetchLine(id: string, p: PrismaClient) {
           status:      true,
           totalAmount: true,
           totalPaid:   true,
-          stages: { select: { status: true } },
+          stages: { select: { status: true, order: true }, orderBy: { order: "asc" } },
         },
       },
     },
@@ -268,10 +458,43 @@ export interface ReleaseCheckResult {
 
 async function _checkReleaseEligibility(
   line: LineWithRelations,
+  p: PrismaClient = defaultPrisma,
 ): Promise<ReleaseCheckResult> {
   const entitlement = Number(line.entitledAmount);
   const category    = line.category as LocumTreatmentCategory;
 
+  // ── Stage-release scheme path ─────────────────────────────────────────
+  // When the line is tied to a treatment plan and a scheme matches its
+  // treatment code / subtype, release is computed stage-by-stage from the
+  // clinic's configured percentages.
+  if (line.treatmentPlan) {
+    const schemes = await getEffectiveSchemes(line.clinicId ?? null, p);
+    const scheme  = matchScheme(schemes, line.treatment.treatmentType.code, line.subType);
+    if (scheme && scheme.stages.length > 0) {
+      const result = computeStageRelease(scheme, {
+        planStages:      line.treatmentPlan.stages as { status: string }[],
+        planStatus:      line.treatmentPlan.status,
+        totalPackage:    Number(line.treatmentPlan.totalAmount),
+        totalCollected:  Number(line.treatmentPlan.totalPaid),
+        labFeeConfirmed: !!line.labFeeConfirmed,
+      });
+      const releaseAmount = Math.round(entitlement * result.releasablePct) / 100;
+      const alreadyReleased = Number(line.releasedAmount);
+      if (releaseAmount <= alreadyReleased) {
+        const blocked = result.breakdown.filter(b => !b.satisfied);
+        return {
+          eligible: false,
+          reason: blocked.length
+            ? `No new stage releasable under "${scheme.name}" scheme — ${blocked.map(b => `${b.name} (${b.percent}%): ${b.blockedBy}`).join("; ")}`
+            : `Nothing new to release — ${result.releasablePct}% already released.`,
+          releaseAmount: alreadyReleased,
+        };
+      }
+      return { eligible: true, releaseAmount };
+    }
+  }
+
+  // ── Legacy category rules (no plan or no matching scheme) ─────────────
   switch (category) {
     case "ONE_OFF":
       return { eligible: true, releaseAmount: entitlement };
@@ -452,19 +675,22 @@ export async function step5_checkAndRelease(
   assertNotTerminal(line);
   assertStep4Done(line);
 
-  if (line.status === "PENDING_RELEASE") {
-    throw new WorkflowError("Line is already in PENDING_RELEASE state", "INVALID_STATE");
+  // Re-checking a PENDING_RELEASE line is allowed: stage-based schemes release
+  // progressively, so a later check can raise the releasable amount.
+  const result = await _checkReleaseEligibility(line, p);
+  if (!result.eligible) {
+    if (line.status === "PENDING_RELEASE") {
+      throw new WorkflowError(result.reason ?? "Nothing new to release", "INVALID_STATE");
+    }
+    return result; // caller surfaces the reason to the user
   }
-
-  const result = await _checkReleaseEligibility(line);
-  if (!result.eligible) return result; // caller surfaces the reason to the user
 
   await (p as any).locumPayoutLine.update({
     where: { id: lineId },
     data: {
       status:           "PENDING_RELEASE",
       releasedAmount:   result.releaseAmount,
-      pendingReleaseAt: new Date(),
+      ...(line.pendingReleaseAt ? {} : { pendingReleaseAt: new Date() }),
     },
   });
   return result;
@@ -574,6 +800,8 @@ export interface CreatePayoutLineInput {
   /** Effective payout % of the net pool. Defaults to the treatment's doctorSplit.
    *  For permanent doctors pass split × rate (e.g. 100% × 15% → 15). */
   doctorSplit?:             number;
+  subType?:                 string;   // material / variant, e.g. "PFM", "Valplast"
+  toothCodes?:              string;   // e.g. "16" or "11,12"
 }
 
 export async function createPayoutLine(
@@ -631,6 +859,8 @@ export async function createPayoutLine(
       treatmentPlanId: input.treatmentPlanId  ?? null,
       treatmentStageId: input.treatmentStageId ?? null,
       orthoPaymentTrackEnabled: input.orthoPaymentTrackEnabled ?? false,
+      subType:         input.subType    ?? null,
+      toothCodes:      input.toothCodes ?? null,
     },
     update: {
       // Re-compute if a line already exists (e.g., lab fee was later adjusted)

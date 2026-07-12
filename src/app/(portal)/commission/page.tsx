@@ -135,6 +135,8 @@ export default async function CommissionPage({
         pendingReleaseAt:   l.pendingReleaseAt?.toISOString()  ?? null,
         paidAt:             l.paidAt?.toISOString()            ?? null,
         forceReleasedAt:    l.forceReleasedAt?.toISOString()   ?? null,
+        subType:            l.subType    ?? null,
+        toothCodes:         l.toothCodes ?? null,
         notes:              l.notes ?? null,
         treatment: {
           treatmentType: { name: l.treatment.treatmentType.name, code: l.treatment.treatmentType.code },

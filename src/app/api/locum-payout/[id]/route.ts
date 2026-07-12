@@ -182,6 +182,24 @@ export async function PATCH(
         return NextResponse.json({ ok: true });
       }
 
+      // ── Clinical detail: sub-type (PFM, Valplast…) and tooth numbers ─────
+      case "update_details": {
+        const allowed = ["SUPER_ADMIN", "CLINIC_MANAGER", "FINANCE", "RECEPTIONIST", "NURSE"];
+        if (!allowed.includes(role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+        const data: Record<string, string | null> = {};
+        if (body.subType    !== undefined) data.subType    = String(body.subType    ?? "").trim() || null;
+        if (body.toothCodes !== undefined) data.toothCodes = String(body.toothCodes ?? "").trim() || null;
+        if (Object.keys(data).length === 0) {
+          return NextResponse.json({ error: "Provide subType and/or toothCodes" }, { status: 400 });
+        }
+        try {
+          await (prisma as any).locumPayoutLine.update({ where: { id: params.id }, data });
+        } catch {
+          return NextResponse.json({ error: "Line not found" }, { status: 404 });
+        }
+        return NextResponse.json({ ok: true });
+      }
+
       // ── Void ─────────────────────────────────────────────────────────────
       case "void": {
         const allowed = ["SUPER_ADMIN", "FINANCE"];

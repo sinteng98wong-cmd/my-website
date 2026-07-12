@@ -31,6 +31,8 @@ export type LocumLine = {
   pendingReleaseAt:  string | null;
   paidAt:            string | null;
   forceReleasedAt:   string | null;
+  subType:           string | null;
+  toothCodes:        string | null;
   notes:             string | null;
   treatment: {
     treatmentType: { name: string; code: string };
@@ -264,6 +266,57 @@ function LabFeeModal({
   );
 }
 
+// ─── Sub-type / tooth details modal ──────────────────────────────────────────
+
+function DetailsModal({
+  line, onDone, onCancel,
+}: { line: LocumLine; onDone: () => void; onCancel: () => void }) {
+  const [subType, setSubType]       = useState(line.subType ?? "");
+  const [toothCodes, setToothCodes] = useState(line.toothCodes ?? "");
+  const [busy, setBusy]             = useState(false);
+  const [error, setError]           = useState("");
+
+  async function submit() {
+    setBusy(true); setError("");
+    const res = await fetch(`/api/locum-payout/${line.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "update_details", subType, toothCodes }),
+    });
+    setBusy(false);
+    if (!res.ok) { const d = await res.json(); setError(d.error ?? "Failed"); return; }
+    onDone();
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 space-y-4">
+        <div>
+          <h3 className="font-semibold text-slate-900">Treatment Details</h3>
+          <p className="text-sm text-slate-500 mt-1">{line.treatment.treatmentType.name} — {line.treatment.visit.patient.name}</p>
+        </div>
+        <div>
+          <label className="form-label">Sub-type / material</label>
+          <input value={subType} onChange={e => setSubType(e.target.value)}
+            className="form-input" placeholder="e.g. PFM, Zirconia, Valplast" list={`subtypes-${line.id}`} />
+        </div>
+        <div>
+          <label className="form-label">Tooth number(s)</label>
+          <input value={toothCodes} onChange={e => setToothCodes(e.target.value)}
+            className="form-input" placeholder="e.g. 16 or 11,12" />
+        </div>
+        {error && <p className="text-xs text-red-600">{error}</p>}
+        <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+          <button onClick={onCancel} disabled={busy} className="btn-secondary text-sm">Cancel</button>
+          <button onClick={submit} disabled={busy} className="btn-primary text-sm">
+            {busy ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Single line row ──────────────────────────────────────────────────────────
 
 function LineRow({
@@ -273,6 +326,8 @@ function LineRow({
   const [errMsg,      setErrMsg]      = useState("");
   const [showForce,   setShowForce]   = useState(false);
   const [showLabFee,  setShowLabFee]  = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
+  const canEditDetails = ["SUPER_ADMIN", "CLINIC_MANAGER", "FINANCE", "RECEPTIONIST", "NURSE"].includes(role);
 
   const next = nextAction(line, role, ownDoctorId);
   const canForce = ["SUPER_ADMIN", "CLINIC_MANAGER", "FINANCE"].includes(role)
@@ -308,10 +363,18 @@ function LineRow({
 
         {/* Treatment */}
         <td className="px-4 py-3">
-          <p className="text-sm text-slate-700">{line.treatment.treatmentType.name}</p>
-          {line.treatmentPlan && (
-            <p className="text-xs text-slate-400 mt-0.5">{line.treatmentPlan.planRef}</p>
-          )}
+          <div className="flex items-center gap-1.5">
+            <p className="text-sm text-slate-700">{line.treatment.treatmentType.name}</p>
+            {canEditDetails && (
+              <button onClick={() => setShowDetails(true)} title="Edit sub-type / tooth"
+                className="text-slate-300 hover:text-blue-500 transition-colors text-xs leading-none">✎</button>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+            {line.subType && <span className="badge-slate text-[10px]">{line.subType}</span>}
+            {line.toothCodes && <span className="text-[10px] text-slate-500 font-mono">🦷 {line.toothCodes}</span>}
+            {line.treatmentPlan && <span className="text-xs text-slate-400">{line.treatmentPlan.planRef}</span>}
+          </div>
         </td>
 
         {/* Category */}
@@ -352,11 +415,20 @@ function LineRow({
           <p className="text-[10px] text-slate-400">× {line.doctorSplit}%</p>
         </td>
 
-        {/* Released */}
+        {/* Released — with % of case entitlement */}
         <td className="px-4 py-3 tabular-nums text-sm text-right">
-          {line.releasedAmount > 0
-            ? <span className="font-semibold text-green-700">{RM(line.releasedAmount)}</span>
-            : <span className="text-slate-300">—</span>}
+          {line.releasedAmount > 0 ? (
+            <>
+              <span className="font-semibold text-green-700">{RM(line.releasedAmount)}</span>
+              {line.entitledAmount > 0 && line.releasedAmount < line.entitledAmount && (
+                <p className="text-[10px] text-slate-400">
+                  {Math.round((line.releasedAmount / line.entitledAmount) * 100)}% of case
+                </p>
+              )}
+            </>
+          ) : (
+            <span className="text-slate-300">—</span>
+          )}
         </td>
 
         {/* Actions */}
@@ -397,6 +469,13 @@ function LineRow({
           estimatedFee={line.labFee}
           onDone={() => { setShowLabFee(false); onRefresh(); }}
           onCancel={() => setShowLabFee(false)}
+        />
+      )}
+      {showDetails && (
+        <DetailsModal
+          line={line}
+          onDone={() => { setShowDetails(false); onRefresh(); }}
+          onCancel={() => setShowDetails(false)}
         />
       )}
     </>

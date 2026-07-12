@@ -2,6 +2,7 @@ import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import Decimal from "decimal.js";
 import { buildPayload, serialisePayload, type RawTreatmentInput, type DeductionItem } from "../src/services/commission.service";
+import { DEFAULT_SCHEMES } from "../src/services/locum-payout.service";
 
 const prisma = new PrismaClient();
 
@@ -1442,7 +1443,7 @@ async function main() {
       doctorVerifiedAt: lmDate(5, 14),  doctorVerifiedBy: doctorHafiz.id,
       completionMarkedAt: null, completionMarkedBy: null,
       pendingReleaseAt: null, paidAt: null, paidBy: null,
-      planId: plan2.id, notes: "Awaiting physical lab invoice from Bestdent",
+      planId: plan2.id, subType: "PFM", toothCodes: "26", notes: "Awaiting physical lab invoice from Bestdent",
     },
     // 4. ORTHO_BONDING — 50% released, awaiting payment → Mark Paid (Finance)
     {
@@ -1452,7 +1453,7 @@ async function main() {
       doctorVerifiedAt: lmDate(8, 14),  doctorVerifiedBy: doctorHafiz.id,
       completionMarkedAt: lmDate(8, 15), completionMarkedBy: doctorHafiz.id,
       pendingReleaseAt: lmDate(9, 9), paidAt: null, paidBy: null,
-      planId: plan4.id, notes: "Bonding release = 50% of entitlement; balance on debond",
+      planId: plan4.id, subType: "Metal", toothCodes: null as string | null, notes: "Bonding release = 50% of entitlement; balance on debond",
     },
     // 5. ALIGNER — patient paid 37.5% of package, release locked until ≥70%
     {
@@ -1462,7 +1463,7 @@ async function main() {
       doctorVerifiedAt: lmDate(9, 14),  doctorVerifiedBy: doctorHafiz.id,
       completionMarkedAt: null, completionMarkedBy: null,
       pendingReleaseAt: null, paidAt: null, paidBy: null,
-      planId: null, notes: "Patient paid 37.5% — 30% release unlocks at 70% of package price",
+      planId: null, subType: "Invisalign", toothCodes: null, notes: "Patient paid 37.5% — 30% release unlocks at 70% of package price",
     },
     // 6. ONE_OFF, brand-new — no steps done → Verify Cash (counter)
     {
@@ -1502,9 +1503,35 @@ async function main() {
         pendingReleaseAt: l.pendingReleaseAt,
         paidAt: l.paidAt, paidBy: l.paidBy,
         treatmentPlanId: l.planId,
+        subType: (l as any).subType ?? null,
+        toothCodes: (l as any).toothCodes ?? null,
         notes: l.notes,
       },
     });
+    await (prisma as any).locumPayoutLine.update({
+      where: { id: l.id },
+      data:  { subType: (l as any).subType ?? null, toothCodes: (l as any).toothCodes ?? null },
+    });
+  }
+
+  // ── Payout stage-release schemes (global defaults) ─────────────────────
+  for (const s of DEFAULT_SCHEMES) {
+    const exists = await (prisma as any).payoutScheme.findFirst({
+      where: { clinicId: null, name: s.name },
+    });
+    if (!exists) {
+      await (prisma as any).payoutScheme.create({
+        data: {
+          clinicId: null,
+          name: s.name,
+          matchCodes: s.matchCodes as any,
+          subTypes: s.subTypes as any,
+          paymentTracked: s.paymentTracked,
+          stages: s.stages as any,
+          active: true,
+        },
+      });
+    }
   }
 
   console.log("✅ Sample data seeded!");

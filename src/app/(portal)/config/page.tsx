@@ -48,6 +48,22 @@ export default async function ConfigPage() {
           </Link>
 
           <Link
+            href="/config/payout-rules"
+            className="card p-4 hover:shadow-md transition-shadow flex items-start gap-4"
+          >
+            <div className="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center shrink-0">
+              <span className="text-amber-700 text-lg">💰</span>
+            </div>
+            <div>
+              <p className="font-semibold text-slate-800">Payout Release Rules</p>
+              <p className="text-sm text-slate-500 mt-0.5">
+                Stage-by-stage release percentages per case type (RCT, denture,
+                crown, ortho, aligner) — customisable per clinic.
+              </p>
+            </div>
+          </Link>
+
+          <Link
             href="/config/account-codes"
             className="card p-4 hover:shadow-md transition-shadow flex items-start gap-4"
           >
