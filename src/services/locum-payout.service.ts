@@ -193,10 +193,12 @@ export interface StageReleaseContext {
   labFeeConfirmed: boolean;
 }
 
+export type StageBlockType = "stage" | "lab" | "payment" | "case";
+
 export interface StageReleaseResult {
   /** 0–100: % of the entitlement currently releasable */
   releasablePct: number;
-  breakdown: { name: string; percent: number; satisfied: boolean; blockedBy?: string }[];
+  breakdown: { name: string; percent: number; satisfied: boolean; blockedBy?: string; blockedType?: StageBlockType }[];
 }
 
 /**
@@ -233,19 +235,24 @@ export function computeStageRelease(
       (planStage ? (planStage.status === "COMPLETED" || planStage.status === "SKIPPED") : false);
 
     let blockedBy: string | undefined;
+    let blockedType: StageBlockType | undefined;
     if (!stageDone) {
       blockedBy = planStage ? `stage "${rule.name}" not completed` : "no matching plan stage";
+      blockedType = "stage";
     } else if (rule.requiresLabInvoice && !ctx.labFeeConfirmed) {
       blockedBy = "lab invoice not logged";
+      blockedType = "lab";
     } else if (rule.paymentThresholdPct && paidPct < rule.paymentThresholdPct) {
       blockedBy = `patient paid ${paidPct.toFixed(1)}% — needs ≥ ${rule.paymentThresholdPct}%`;
+      blockedType = "payment";
     } else if (rule.requiresCaseComplete && !caseComplete) {
       blockedBy = "case not completed";
+      blockedType = "case";
     }
 
     const satisfied = !blockedBy;
     if (satisfied) releasablePct += rule.percent;
-    breakdown.push({ name: rule.name, percent: rule.percent, satisfied, blockedBy });
+    breakdown.push({ name: rule.name, percent: rule.percent, satisfied, blockedBy, blockedType });
   });
 
   return { releasablePct: Math.min(100, releasablePct), breakdown };

@@ -5,6 +5,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { StaffCommissionTable }  from "./StaffCommissionTable";
 import { LocumPayoutTable, type LocumDoctorGroup } from "./LocumPayoutTable";
+import { getEffectiveSchemes, matchScheme, computeStageRelease } from "@/services/locum-payout.service";
 import { Users, Calculator, Banknote, FileCheck, Wallet, BadgeCheck, type LucideIcon } from "lucide-react";
 
 const RM = (n: number) =>
@@ -18,7 +19,7 @@ const TABS = [
 export default async function CommissionPage({
   searchParams,
 }: {
-  searchParams: { month?: string; tab?: string };
+  searchParams: { month?: string; tab?: string; view?: string };
 }) {
   const session = await getServerSession(authOptions);
   const role    = (session?.user as any)?.role   as string;
@@ -27,6 +28,7 @@ export default async function CommissionPage({
   const month       = searchParams.month ?? new Date().toISOString().slice(0, 7);
   const tabParam    = searchParams.tab ?? "locum";
   const tab         = (TABS.some(t => t.key === tabParam) ? tabParam : "locum") as typeof TABS[number]["key"];
+  const view        = searchParams.view === "doctor" ? "doctor" : "status";
   const isDoctor  = role === "DOCTOR";
   const canLock   = ["SUPER_ADMIN", "FINANCE"].includes(role);
   const canRun    = ["SUPER_ADMIN", "FINANCE", "CLINIC_MANAGER"].includes(role);
@@ -71,7 +73,10 @@ export default async function CommissionPage({
           },
         },
         treatmentPlan: {
-          select: { planRef: true, title: true, status: true, totalAmount: true, totalPaid: true },
+          select: {
+            planRef: true, title: true, status: true, totalAmount: true, totalPaid: true,
+            stages: { select: { status: true, order: true }, orderBy: { order: "asc" } },
+          },
         },
         doctorProfile: {
           select: {
@@ -92,6 +97,36 @@ export default async function CommissionPage({
   // Statement lookup: DoctorProfile.id → { id, status }
   const stmtByDoctor: Record<string, { id: string; status: string }> = {};
   for (const s of stmtRows as any[]) stmtByDoctor[s.doctorId] = { id: s.id, status: s.status };
+
+  // Classify each line into a workflow bucket for the status-grouped view
+  const schemes = await getEffectiveSchemes(selectedClinicId || null).catch(() => []);
+  function bucketFor(l: any): string {
+    if (l.status === "VOIDED") return "voided";
+    if (l.status === "PAID")   return "paid";
+    if (l.status === "PENDING_RELEASE") return "ready_to_pay";
+    if (!l.counterVerifiedAt || !l.doctorVerifiedAt) return "pending_verification";
+    if (l.treatment.labJobId && !l.labFeeConfirmed)  return "pending_lab";
+
+    const scheme = matchScheme(schemes, l.treatment.treatmentType.code, l.subType ?? null);
+    if (l.treatmentPlan && scheme && scheme.stages.length > 0) {
+      const res = computeStageRelease(scheme, {
+        planStages:      (l.treatmentPlan.stages ?? []) as { status: string }[],
+        planStatus:      l.treatmentPlan.status,
+        totalPackage:    Number(l.treatmentPlan.totalAmount),
+        totalCollected:  Number(l.treatmentPlan.totalPaid),
+        labFeeConfirmed: !!l.labFeeConfirmed,
+      });
+      const releasable = Number(l.entitledAmount) * res.releasablePct / 100;
+      if (releasable > Number(l.releasedAmount) + 0.005) return "ready_to_release";
+      if (scheme.paymentTracked) return "pending_payment";
+      const blockers = res.breakdown.filter(b => !b.satisfied);
+      if (blockers.some(b => b.blockedType === "payment")) return "pending_payment";
+      if (blockers.some(b => b.blockedType === "lab"))     return "pending_lab";
+      return "pending_completion";
+    }
+    if (!l.completionMarkedAt) return "pending_completion";
+    return "ready_to_release";
+  }
 
   // Group payout lines by doctor
   function buildLocumGroups(lines: any[]): LocumDoctorGroup[] {
@@ -120,6 +155,7 @@ export default async function CommissionPage({
         id:                 l.id,
         category:           l.category,
         status:             l.status,
+        bucket:             bucketFor(l),
         billedAmount:       Number(l.billedAmount),
         labFee:             Number(l.labFee),
         labFeeConfirmed:    l.labFeeConfirmed,
@@ -232,6 +268,7 @@ export default async function CommissionPage({
           groups={locumGroups}
           month={month}
           role={role}
+          view={view}
           ownDoctorId={ownDoctorProfileId}
           stmtByDoctor={stmtByDoctor}
         />

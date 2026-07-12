@@ -16,6 +16,8 @@ export type LocumLine = {
   id: string;
   category: string;
   status: string;
+  /** Workflow bucket for the status-grouped view (computed server-side) */
+  bucket: string;
   billedAmount: number;
   labFee: number;
   labFeeConfirmed: boolean;
@@ -62,10 +64,25 @@ interface Props {
   groups:      LocumDoctorGroup[];
   month:       string;
   role:        string;
+  /** "status" groups by workflow bucket; "doctor" groups by doctor */
+  view?:       "status" | "doctor";
   ownDoctorId: string | null; // DoctorProfile.id of the signed-in doctor, or null
   /** Existing monthly statements keyed by DoctorProfile.id */
   stmtByDoctor?: Record<string, { id: string; status: string }>;
 }
+
+// ─── Workflow buckets (status view) ──────────────────────────────────────────
+
+const BUCKETS: { key: string; label: string; hint: string; badge: string }[] = [
+  { key: "pending_verification", label: "Pending Verification",    hint: "Counter / doctor verification not done yet",             badge: "badge-slate"  },
+  { key: "pending_lab",          label: "Pending Lab Invoice",     hint: "Waiting for the physical lab invoice to be logged",      badge: "badge-amber"  },
+  { key: "pending_completion",   label: "Pending Completion",      hint: "Case stages not finished — funds stay locked",           badge: "badge-amber"  },
+  { key: "pending_payment",      label: "Pending Patient Payment", hint: "Patient hasn't reached the payment threshold",           badge: "badge-purple" },
+  { key: "ready_to_release",     label: "Ready to Release",        hint: "Conditions met — run Check Release",                     badge: "badge-blue"   },
+  { key: "ready_to_pay",         label: "Ready to Pay",            hint: "Released — finance can mark as paid",                    badge: "badge-blue"   },
+  { key: "paid",                 label: "Paid",                    hint: "Payout completed",                                       badge: "badge-green"  },
+  { key: "voided",               label: "Voided",                  hint: "Cancelled lines",                                        badge: "badge-red"    },
+];
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -320,8 +337,8 @@ function DetailsModal({
 // ─── Single line row ──────────────────────────────────────────────────────────
 
 function LineRow({
-  line, role, ownDoctorId, onRefresh,
-}: { line: LocumLine; role: string; ownDoctorId: string | null; onRefresh: () => void }) {
+  line, role, ownDoctorId, onRefresh, doctorName,
+}: { line: LocumLine; role: string; ownDoctorId: string | null; onRefresh: () => void; doctorName?: string }) {
   const [busy,        setBusy]        = useState(false);
   const [errMsg,      setErrMsg]      = useState("");
   const [showForce,   setShowForce]   = useState(false);
@@ -355,6 +372,13 @@ function LineRow({
   return (
     <>
       <tr className="table-row">
+        {/* Doctor (status view only) */}
+        {doctorName !== undefined && (
+          <td className="px-4 py-3">
+            <p className="text-sm text-slate-700 whitespace-nowrap">{doctorName}</p>
+          </td>
+        )}
+
         {/* Patient */}
         <td className="px-4 py-3">
           <p className="font-medium text-slate-900 text-sm">{line.treatment.visit.patient.name}</p>
@@ -628,6 +652,76 @@ function DoctorGroupCard({
   );
 }
 
+// ─── Status group card (status view) ─────────────────────────────────────────
+
+function StatusGroupCard({
+  bucket, lines, role, ownDoctorId, onRefresh,
+}: {
+  bucket: typeof BUCKETS[number];
+  lines: (LocumLine & { doctorName: string })[];
+  role: string; ownDoctorId: string | null; onRefresh: () => void;
+}) {
+  const [open, setOpen] = useState(bucket.key !== "paid" && bucket.key !== "voided");
+  const totalEntitled = lines.reduce((s, l) => s + l.entitledAmount, 0);
+  const totalReleased = lines.reduce((s, l) => s + l.releasedAmount, 0);
+
+  return (
+    <div className="card overflow-hidden">
+      <div
+        className="flex items-center justify-between px-5 py-4 cursor-pointer select-none hover:bg-slate-50/60 transition-colors"
+        onClick={() => setOpen(o => !o)}
+      >
+        <div className="flex items-center gap-3 min-w-0">
+          <span className={`${bucket.badge} text-[11px]`}>{lines.length}</span>
+          <div className="min-w-0">
+            <p className="font-semibold text-slate-900 text-sm">{bucket.label}</p>
+            <p className="text-xs text-slate-400 mt-0.5">{bucket.hint}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-4 flex-shrink-0">
+          <div className="hidden sm:flex items-center gap-3 text-right">
+            <div>
+              <p className="text-[10px] text-slate-400 uppercase tracking-wide">Entitled</p>
+              <p className="text-sm font-semibold text-slate-800 tabular-nums">{RM(totalEntitled)}</p>
+            </div>
+            <div>
+              <p className="text-[10px] text-slate-400 uppercase tracking-wide">Released</p>
+              <p className="text-sm font-semibold text-green-700 tabular-nums">{RM(totalReleased)}</p>
+            </div>
+          </div>
+          {open ? <ChevronUp size={16} className="text-slate-400" /> : <ChevronDown size={16} className="text-slate-400" />}
+        </div>
+      </div>
+
+      {open && (
+        <div className="overflow-x-auto border-t border-slate-100">
+          <table className="w-full text-sm">
+            <thead className="table-header">
+              <tr>
+                {["Doctor", "Patient", "Treatment", "Category", "Status", "Steps ①②③④⑤⑥", "Net Pool", "Entitled", "Released", "Action"].map(h => (
+                  <th key={h} className="px-4 py-2.5 text-left text-[10px] font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map(line => (
+                <LineRow
+                  key={line.id}
+                  line={line}
+                  role={role}
+                  ownDoctorId={ownDoctorId}
+                  onRefresh={onRefresh}
+                  doctorName={line.doctorName}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Doctor earnings summary ──────────────────────────────────────────────────
 // Shown to the signed-in doctor: a month-to-date statement of their earnings
 // with the full calculation chain (billed → net pool → share → released).
@@ -666,7 +760,7 @@ function EarningsSummary({ group }: { group: LocumDoctorGroup }) {
 
 // ─── Main export ──────────────────────────────────────────────────────────────
 
-export function LocumPayoutTable({ groups, month, role, ownDoctorId, stmtByDoctor = {} }: Props) {
+export function LocumPayoutTable({ groups, month, role, view = "status", ownDoctorId, stmtByDoctor = {} }: Props) {
   const router = useRouter();
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncMsg,  setSyncMsg]  = useState("");
@@ -718,6 +812,12 @@ export function LocumPayoutTable({ groups, month, role, ownDoctorId, stmtByDocto
     ? groups.find(g => g.doctorProfileId === ownDoctorId) ?? groups[0]
     : null;
 
+  // Flatten lines (with doctor name) and bucket them for the status view
+  const flatLines = groups.flatMap(g => g.lines.map(l => ({ ...l, doctorName: g.doctorName })));
+  const bucketed  = BUCKETS
+    .map(b => ({ bucket: b, lines: flatLines.filter(l => l.bucket === b.key) }))
+    .filter(b => b.lines.length > 0);
+
   return (
     <div className="space-y-4">
       {ownGroup && <EarningsSummary group={ownGroup} />}
@@ -738,24 +838,46 @@ export function LocumPayoutTable({ groups, month, role, ownDoctorId, stmtByDocto
           <span>Total released: <strong className="text-green-700">{RM(grandReleased)}</strong></span>
         </div>
         <div className="ml-auto flex items-center gap-3">
+          {/* View toggle */}
+          <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium">
+            <a href={`?month=${month}&tab=locum&view=status`}
+              className={`px-3 py-1.5 transition-colors ${view === "status" ? "bg-blue-600 text-white" : "bg-white text-slate-500 hover:bg-slate-50"}`}>
+              By Status
+            </a>
+            <a href={`?month=${month}&tab=locum&view=doctor`}
+              className={`px-3 py-1.5 transition-colors ${view === "doctor" ? "bg-blue-600 text-white" : "bg-white text-slate-500 hover:bg-slate-50"}`}>
+              By Doctor
+            </a>
+          </div>
           {syncButton}
-          <span className="text-xs text-slate-400">
+          <span className="text-xs text-slate-400 hidden xl:inline">
             Steps: ① Counter ② Doctor ③ Lab ④ Complete ⑤ Release ⑥ Paid
           </span>
         </div>
       </div>
 
-      {groups.map(g => (
-        <DoctorGroupCard
-          key={g.doctorProfileId}
-          group={g}
-          month={month}
-          role={role}
-          ownDoctorId={ownDoctorId}
-          onRefresh={refresh}
-          stmt={stmtByDoctor[g.doctorProfileId]}
-        />
-      ))}
+      {view === "status"
+        ? bucketed.map(({ bucket, lines }) => (
+            <StatusGroupCard
+              key={bucket.key}
+              bucket={bucket}
+              lines={lines}
+              role={role}
+              ownDoctorId={ownDoctorId}
+              onRefresh={refresh}
+            />
+          ))
+        : groups.map(g => (
+            <DoctorGroupCard
+              key={g.doctorProfileId}
+              group={g}
+              month={month}
+              role={role}
+              ownDoctorId={ownDoctorId}
+              onRefresh={refresh}
+              stmt={stmtByDoctor[g.doctorProfileId]}
+            />
+          ))}
     </div>
   );
 }
