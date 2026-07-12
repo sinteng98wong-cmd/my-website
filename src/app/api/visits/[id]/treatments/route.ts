@@ -8,6 +8,7 @@ const AddSchema = z.object({
   treatmentTypeId: z.string().min(1),
   doctorId:        z.string().min(1).optional(),
   billedAmount:    z.number().nonnegative(),
+  subType:         z.string().optional(), // material / variant, e.g. PFM, Valplast
   labFee:          z.number().nonnegative().default(0),
   // Lab job fields (only if labFee > 0)
   labVendorId:     z.string().min(1).optional(),
@@ -82,20 +83,20 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       data:  { labJobId: labJob.id },
     });
 
-    await createPayoutLineBestEffort(treatment.id);
+    await createPayoutLineBestEffort(treatment.id, d.subType);
     return NextResponse.json({ treatment: { ...treatment, labJob }, labJob }, { status: 201 });
   }
 
-  await createPayoutLineBestEffort(treatment.id);
+  await createPayoutLineBestEffort(treatment.id, d.subType);
   return NextResponse.json({ treatment }, { status: 201 });
 }
 
 /** Daily sales → payout: create the doctor's payout line for this treatment.
  *  Best-effort — a payout failure must never block treatment recording. */
-async function createPayoutLineBestEffort(treatmentId: string) {
+async function createPayoutLineBestEffort(treatmentId: string, subType?: string) {
   try {
     const { ensurePayoutLineForTreatment } = await import("@/services/locum-payout.service");
-    await ensurePayoutLineForTreatment(treatmentId);
+    await ensurePayoutLineForTreatment(treatmentId, undefined, { subType });
   } catch (e) {
     console.error("Payout line auto-create failed:", e);
   }

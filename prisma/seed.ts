@@ -158,21 +158,49 @@ async function main() {
     create: { userId: nurse.id, clinicId: clinicA.id, isFullTime: true },
   });
 
-  // ── Treatment Types ───────────────────────────────────────────────────
+  // ── Treatment Types (per the clinic classification sheet) ─────────────
   const treatments = [
-    { id: "tx-scaling",   code: "SCALING",   name: "Scaling & Polishing",   defaultPrice: 120,  sstApplicable: false },
-    { id: "tx-filling",   code: "FILLING",   name: "Composite Filling",      defaultPrice: 180,  sstApplicable: false },
-    { id: "tx-rct",       code: "RCT",       name: "Root Canal Treatment",   defaultPrice: 1200, sstApplicable: false },
-    { id: "tx-crown",     code: "CROWN",     name: "Crown (Porcelain)",       defaultPrice: 1800, sstApplicable: false },
-    { id: "tx-implant",   code: "IMPLANT",   name: "Implant",                 defaultPrice: 4500, sstApplicable: false },
-    { id: "tx-extraction",code: "EXTRACT",   name: "Extraction",              defaultPrice: 80,   sstApplicable: false },
-    { id: "tx-veneer",    code: "VENEER",    name: "Veneer",                  defaultPrice: 900,  sstApplicable: false },
-    { id: "tx-xray",      code: "XRAY",      name: "X-Ray (Periapical)",      defaultPrice: 30,   sstApplicable: false },
-    { id: "tx-consult",   code: "CONSULT",   name: "Consultation",            defaultPrice: 50,   sstApplicable: false },
-    { id: "tx-braces",    code: "BRACES",    name: "Braces Consultation",     defaultPrice: 200,  sstApplicable: false },
+    // One-Off
+    { id: "tx-extraction",    code: "EXTRACT",         name: "Extraction",                    defaultPrice: 80,   sstApplicable: false },
+    { id: "tx-filling",       code: "FILLING",         name: "Composite Filling",             defaultPrice: 180,  sstApplicable: false },
+    { id: "tx-scaling",       code: "SCALING",         name: "Scaling & Polishing",           defaultPrice: 120,  sstApplicable: false },
+    { id: "tx-consult",       code: "CONSULT",         name: "Checkup & Consultation",        defaultPrice: 50,   sstApplicable: false },
+    { id: "tx-bracket-drop",  code: "BRACKET_DROP",    name: "Bracket Drop",                  defaultPrice: 50,   sstApplicable: false },
+    { id: "tx-denture-adjust",code: "DENTURE_ADJUST",  name: "Denture Adjust",                defaultPrice: 80,   sstApplicable: false },
+    { id: "tx-laser",         code: "LASER",           name: "Laser",                         defaultPrice: 300,  sstApplicable: false },
+    { id: "tx-incision",      code: "INCISION_DRAINAGE", name: "Incision & Drainage",         defaultPrice: 150,  sstApplicable: false },
+    { id: "tx-la",            code: "LA",              name: "Local Anesthesia (LA)",         defaultPrice: 30,   sstApplicable: false },
+    { id: "tx-mos",           code: "MOS",             name: "MOS (Minor Oral Surgery)",      defaultPrice: 450,  sstApplicable: false },
+    { id: "tx-pa",            code: "PA",              name: "PA X-Ray",                      defaultPrice: 30,   sstApplicable: false },
+    { id: "tx-recement-crown",code: "RECEMENT_CROWN",  name: "Recement Crown",                defaultPrice: 100,  sstApplicable: false },
+    { id: "tx-medication",    code: "MEDICATION",      name: "Medication",                    defaultPrice: 30,   sstApplicable: false },
+    { id: "tx-fix-retainer",  code: "FIX_RETAINER",    name: "Fix Retainer",                  defaultPrice: 100,  sstApplicable: false },
+    { id: "tx-pulpotomy",     code: "PULPOTOMY",       name: "Pulpotomy",                     defaultPrice: 250,  sstApplicable: false },
+    { id: "tx-post-crown",    code: "POST_CROWN",      name: "Post Crown",                    defaultPrice: 400,  sstApplicable: false },
+    { id: "tx-implant",       code: "IMPLANT",         name: "Implant",                       defaultPrice: 4500, sstApplicable: false },
+    // Denture Case (with lab)
+    { id: "tx-denture",       code: "DENTURE",         name: "Denture",                       defaultPrice: 1500, sstApplicable: false },
+    { id: "tx-denture-repair",code: "DENTURE_REPAIR",  name: "Denture Repair (Lab)",          defaultPrice: 250,  sstApplicable: false },
+    { id: "tx-bruxism",       code: "BRUXISM",         name: "Bruxism Splint",                defaultPrice: 600,  sstApplicable: false },
+    { id: "tx-retainer",      code: "RETAINER",        name: "Retainer",                      defaultPrice: 400,  sstApplicable: false },
+    { id: "tx-veneer",        code: "VENEER",          name: "Veneer",                        defaultPrice: 900,  sstApplicable: false },
+    { id: "tx-whitening",     code: "WHITENING",       name: "Whitening",                     defaultPrice: 800,  sstApplicable: false },
+    // Scan
+    { id: "tx-xray",          code: "XRAY",            name: "X-Ray (Periapical)",            defaultPrice: 30,   sstApplicable: false },
+    { id: "tx-lateral-ceph",  code: "LATERAL_CEPH",    name: "Lateral Cephalometric X-Ray",   defaultPrice: 80,   sstApplicable: false },
+    { id: "tx-intraoral-scan",code: "INTRAORAL_SCAN",  name: "Intraoral Scan (iTero/3Shape)", defaultPrice: 250,  sstApplicable: false },
+    { id: "tx-cbct",          code: "CBCT",            name: "CBCT",                          defaultPrice: 350,  sstApplicable: false },
+    { id: "tx-ems",           code: "EMS",             name: "EMS (Airflow)",                 defaultPrice: 200,  sstApplicable: false },
+    // RCT
+    { id: "tx-rct",           code: "RCT",             name: "Root Canal Treatment",          defaultPrice: 1200, sstApplicable: false },
+    // Crown / Bridge (with lab)
+    { id: "tx-crown",         code: "CROWN",           name: "Crown",                         defaultPrice: 1800, sstApplicable: false },
+    { id: "tx-bridge",        code: "BRIDGE",          name: "Bridge",                        defaultPrice: 3500, sstApplicable: false },
+    // Ortho
+    { id: "tx-braces",        code: "BRACES",          name: "Braces Case",                   defaultPrice: 5500, sstApplicable: false },
   ];
   for (const t of treatments) {
-    await prisma.treatmentType.upsert({ where: { id: t.id }, update: {}, create: t });
+    await prisma.treatmentType.upsert({ where: { id: t.id }, update: { code: t.code, name: t.name }, create: t });
   }
 
   // ── Commission Config ─────────────────────────────────────────────────

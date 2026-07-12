@@ -24,6 +24,10 @@ const LAB_STATUS: Record<string, string> = {
 };
 
 type TreatmentType  = { id: string; name: string; defaultPrice: number };
+type CatalogCategory = {
+  name: string; hasLab: boolean; subTypes: string[];
+  types: { id: string; name: string; defaultPrice: number }[];
+};
 type Vendor         = { id: string; name: string };
 type Doctor         = { id: string; name: string };
 type PanelProvider  = { id: string; name: string; code: string };
@@ -53,10 +57,11 @@ type Visit = {
 };
 
 export function VisitClient({
-  visit: initial, treatmentTypes, vendors, doctors, panelProviders, banks,
+  visit: initial, treatmentTypes, catalog, vendors, doctors, panelProviders, banks,
 }: {
   visit: Visit;
   treatmentTypes: TreatmentType[];
+  catalog: CatalogCategory[];
   vendors: Vendor[];
   doctors: Doctor[];
   panelProviders: PanelProvider[];
@@ -75,13 +80,15 @@ export function VisitClient({
     remarks:        initial.remarks        ?? "",
   });
 
-  // Treatment add form
+  // Treatment add form — cascading picker: category → type → sub-type.
+  // Lab work is determined by the category (Denture Case / Crown-Bridge / Aligner).
   const blank = {
-    treatmentTypeId: "", doctorId: "", billedAmount: "",
+    category: "", treatmentTypeId: "", subType: "", doctorId: "", billedAmount: "",
     hasLab: false, labVendorId: "", labDescription: "",
     labEstimatedFee: "", labExpectedDate: "",
   };
   const [tx, setTx] = useState({ ...blank });
+  const activeCategory = catalog.find(c => c.name === tx.category) ?? null;
 
   // Billing form
   const [showBilling, setShowBilling]   = useState(false);
@@ -116,8 +123,20 @@ export function VisitClient({
     if (res.ok) setVisit(v => ({ ...v, ...notes }));
   }
 
+  function handleCategoryChange(category: string) {
+    const cat = catalog.find(c => c.name === category);
+    setTx(f => ({
+      ...f,
+      category,
+      treatmentTypeId: "",
+      subType: "",
+      hasLab: cat?.hasLab ?? false, // lab work determined by category
+    }));
+  }
+
   function handleTypeChange(typeId: string) {
-    const t = treatmentTypes.find(t => t.id === typeId);
+    const t = activeCategory?.types.find(t => t.id === typeId)
+      ?? treatmentTypes.find(t => t.id === typeId);
     setTx(f => ({ ...f, treatmentTypeId: typeId, billedAmount: t ? String(t.defaultPrice) : f.billedAmount }));
   }
 
@@ -134,9 +153,10 @@ export function VisitClient({
         treatmentTypeId: tx.treatmentTypeId,
         doctorId:        tx.doctorId        || undefined,
         billedAmount:    parseFloat(tx.billedAmount) || 0,
+        subType:         tx.subType         || undefined,
         labFee:          tx.hasLab ? (parseFloat(tx.labEstimatedFee) || 0) : 0,
         labVendorId:     tx.hasLab ? tx.labVendorId    : undefined,
-        labDescription:  tx.hasLab ? tx.labDescription : undefined,
+        labDescription:  tx.hasLab ? (tx.labDescription || [tx.subType, activeCategory?.types.find(t => t.id === tx.treatmentTypeId)?.name].filter(Boolean).join(" ")) : undefined,
         labEstimatedFee: tx.hasLab ? parseFloat(tx.labEstimatedFee) : undefined,
         labExpectedDate: tx.hasLab ? tx.labExpectedDate : undefined,
       }),
@@ -325,12 +345,32 @@ export function VisitClient({
           <form onSubmit={handleAddTreatment} className="space-y-3">
             <div className="grid grid-cols-3 gap-3">
               <div>
-                <label className="form-label">Treatment Type <span className="text-red-500">*</span></label>
-                <select className="form-input" value={tx.treatmentTypeId} onChange={e => handleTypeChange(e.target.value)} required>
+                <label className="form-label">Category <span className="text-red-500">*</span></label>
+                <select className="form-input" value={tx.category} onChange={e => handleCategoryChange(e.target.value)} required>
                   <option value="">Select…</option>
-                  {treatmentTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  {catalog.map(c => <option key={c.name} value={c.name}>{c.name}{c.hasLab ? " (lab)" : ""}</option>)}
                 </select>
               </div>
+              <div>
+                <label className="form-label">Treatment <span className="text-red-500">*</span></label>
+                <select className="form-input" value={tx.treatmentTypeId} onChange={e => handleTypeChange(e.target.value)}
+                  disabled={!activeCategory} required>
+                  <option value="">{activeCategory ? "Select…" : "Pick a category first"}</option>
+                  {activeCategory?.types.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              </div>
+              {activeCategory && activeCategory.subTypes.length > 0 ? (
+                <div>
+                  <label className="form-label">Sub-type</label>
+                  <select className="form-input" value={tx.subType} onChange={e => setTx(f => ({ ...f, subType: e.target.value }))}>
+                    <option value="">— Select —</option>
+                    {activeCategory.subTypes.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+              ) : <div />}
+            </div>
+
+            <div className="grid grid-cols-3 gap-3">
               <div>
                 <label className="form-label">Doctor</label>
                 <select className="form-input" value={tx.doctorId} onChange={e => setTx(f => ({ ...f, doctorId: e.target.value }))}>
@@ -345,13 +385,13 @@ export function VisitClient({
               </div>
             </div>
 
-            {/* Lab fee toggle */}
-            <div className="flex items-center gap-2">
-              <input type="checkbox" id="hasLab" checked={tx.hasLab}
-                onChange={e => setTx(f => ({ ...f, hasLab: e.target.checked }))}
-                className="h-4 w-4 rounded border-slate-300 text-blue-600" />
-              <label htmlFor="hasLab" className="text-sm font-medium text-slate-700">Has lab work</label>
-            </div>
+            {/* Lab work is determined by the category */}
+            {tx.hasLab && (
+              <p className="text-xs text-blue-700 font-medium">
+                {tx.category} includes lab work — enter the lab details below. The estimated fee is
+                replaced by the exact amount when the physical lab invoice is logged.
+              </p>
+            )}
 
             {tx.hasLab && (
               <div className="grid grid-cols-2 gap-3 pl-6 border-l-2 border-blue-200">

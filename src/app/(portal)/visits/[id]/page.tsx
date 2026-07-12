@@ -69,6 +69,35 @@ export default async function VisitPage({ params }: { params: { id: string } }) 
   const visitSafe        = JSON.parse(JSON.stringify(visit));
   const typesSafe        = treatmentTypes.map(t => ({ ...t, defaultPrice: Number(t.defaultPrice) }));
 
+  // Category catalog for the cascading treatment picker: main category
+  // (per the clinic's classification sheet) → treatment types → sub-types.
+  // Lab work applies to Denture Case / Crown-Bridge / Aligner.
+  const { getEffectiveSchemes, matchScheme, isScanCode } = await import("@/services/locum-payout.service");
+  const schemes = await getEffectiveSchemes(visit.clinicId).catch(() => []);
+  const LAB_CATEGORIES = new Set(["Denture Case", "Crown / Bridge", "Aligner"]);
+  const CATEGORY_ORDER = ["One-Off", "Denture Case", "Scan", "RCT", "Crown / Bridge", "Ortho", "Aligner"];
+
+  const catMap = new Map<string, { name: string; hasLab: boolean; subTypes: string[]; types: { id: string; name: string; defaultPrice: number }[] }>();
+  for (const t of treatmentTypes as any[]) {
+    const category = isScanCode(t.code)
+      ? "Scan"
+      : (matchScheme(schemes, t.code)?.name ?? "One-Off");
+    if (!catMap.has(category)) {
+      const scheme = schemes.find(s => s.name === category);
+      catMap.set(category, {
+        name: category,
+        hasLab: LAB_CATEGORIES.has(category),
+        subTypes: scheme?.subTypes ?? [],
+        types: [],
+      });
+    }
+    catMap.get(category)!.types.push({ id: t.id, name: t.name, defaultPrice: Number(t.defaultPrice) });
+  }
+  const catalog = Array.from(catMap.values()).sort((a, b) => {
+    const ia = CATEGORY_ORDER.indexOf(a.name), ib = CATEGORY_ORDER.indexOf(b.name);
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+  });
+
   return (
     <div>
       <div className="mb-6">
@@ -84,6 +113,7 @@ export default async function VisitPage({ params }: { params: { id: string } }) 
       <VisitClient
         visit={visitSafe}
         treatmentTypes={typesSafe}
+        catalog={catalog}
         vendors={vendors}
         doctors={doctors}
         panelProviders={panelProviders}

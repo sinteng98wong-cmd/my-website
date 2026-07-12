@@ -36,15 +36,24 @@ export type LocumPayoutStatus =
 // checked FIRST so that e.g. Pulpotomy doesn't fall into RCT, Post Crown /
 // Recement Crown into Crown/Bridge, Bracket Drop into Ortho, Denture Adjust
 // into Denture, or Fix Retainer into anything staged. Includes all scans.
+// Scans are their own main category on the classification sheet (but behave
+// as one-offs for payout: no stages, full release)
+export const SCAN_CODES = [
+  "OPG", "PANORAMIC", "CEPH", "LATERAL", "INTRAORAL", "ITERO", "3SHAPE",
+  "SCAN", "CBCT", "EMS", "XRAY",
+] as const;
+
 export const ONE_OFF_CODES = [
   "EXTRACT", "FILLING", "SCALING", "POLISH", "CHECKUP", "CONSULT",
   "BRACKET_DROP", "DENTURE_ADJUST", "LASER", "INCISION", "DRAINAGE",
   "ANESTH", "LA", "MOS", "PA", "RECEMENT", "MEDICATION", "FIX_RETAINER",
   "PULPOTOMY", "POST_CROWN",
-  // Scans / ancillaries
-  "OPG", "PANORAMIC", "CEPH", "LATERAL", "INTRAORAL", "ITERO", "3SHAPE",
-  "SCAN", "CBCT", "EMS", "XRAY",
+  ...SCAN_CODES,
 ] as const;
+
+export function isScanCode(code: string): boolean {
+  return matchesAny(code, SCAN_CODES);
+}
 
 // Code prefix/substring patterns — match TreatmentType.code values (case-insensitive)
 const CATEGORY_CODES = {
@@ -971,6 +980,7 @@ export async function createPayoutLine(
 export async function ensurePayoutLineForTreatment(
   treatmentId: string,
   p: PrismaClient = defaultPrisma,
+  opts?: { subType?: string },
 ): Promise<string | null> {
   const t = await p.treatment.findUnique({
     where: { id: treatmentId },
@@ -1005,7 +1015,7 @@ export async function ensurePayoutLineForTreatment(
   // Staged treatment with no plan yet → auto-create the case from the scheme
   if (!plan) {
     const schemes = await getEffectiveSchemes(t.visit.clinicId, p);
-    const scheme  = matchScheme(schemes, t.treatmentType.code);
+    const scheme  = matchScheme(schemes, t.treatmentType.code, opts?.subType ?? null);
     if (scheme && scheme.stages.length > 0) {
       const { generateTreatmentPlanRef } = await import("@/lib/ref-generator");
       const planRef = await generateTreatmentPlanRef();
@@ -1045,6 +1055,7 @@ export async function ensurePayoutLineForTreatment(
     month,
     doctorSplit:     effectiveSplit,
     treatmentPlanId: plan?.id,
+    subType:         opts?.subType,
   }, p);
 }
 
