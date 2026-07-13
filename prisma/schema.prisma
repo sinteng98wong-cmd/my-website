@@ -2446,6 +2446,7 @@ model TreatmentPlan {
   clinic                 Clinic              @relation(fields: [clinicId], references: [id])
   dentistId              String
   dentist                User                @relation("PlanDentist", fields: [dentistId], references: [id])
+  treatmentTypeId        String?             // the treatment type this case is for (used to link recorded treatments to their plan)
   title                  String
   toothCodes             String[]
   status                 TreatmentPlanStatus @default(DRAFT)

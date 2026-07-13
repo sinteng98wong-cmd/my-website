@@ -1042,12 +1042,16 @@ export async function ensurePayoutLineForTreatment(
   let plan = await p.treatmentPlan.findFirst({
     where: {
       patientId: t.visit.patientId,
-      status:    { in: ["ACCEPTED", "IN_PROGRESS"] as any },
+      // any active (non-terminal) plan for this type — includes UI plans still
+      // in DRAFT/QUOTED, so recording the treatment reuses them (no duplicate)
+      status:    { in: ["DRAFT", "QUOTED", "ACCEPTED", "IN_PROGRESS"] as any },
       OR: [
-        { stages: { some: { template: { treatmentTypeId: t.treatmentTypeId } } } },
-        { notes: `auto:${t.treatmentTypeId}` }, // plan auto-created below for this type
+        { treatmentTypeId: t.treatmentTypeId },                                   // plans tagged with their type (UI + auto)
+        { stages: { some: { template: { treatmentTypeId: t.treatmentTypeId } } } }, // legacy template-built plans
+        { notes: `auto:${t.treatmentTypeId}` },                                    // legacy auto-created plans
       ],
     },
+    orderBy: { createdAt: "desc" },
     select: { id: true },
   });
 
@@ -1062,9 +1066,10 @@ export async function ensurePayoutLineForTreatment(
       plan = await p.treatmentPlan.create({
         data: {
           planRef,
-          patientId:  t.visit.patientId,
-          clinicId:   t.visit.clinicId,
-          dentistId:  t.doctor.userId,
+          patientId:       t.visit.patientId,
+          clinicId:        t.visit.clinicId,
+          dentistId:       t.doctor.userId,
+          treatmentTypeId: t.treatmentTypeId,
           title:      `${t.treatmentType.name} (${scheme.name})`,
           status:     "ACCEPTED" as any,
           acceptedAt: new Date(),

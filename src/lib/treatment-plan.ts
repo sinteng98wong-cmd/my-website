@@ -88,6 +88,7 @@ export async function createPlanFromTemplate(params: {
       patientId:       params.patientId,
       clinicId:        params.clinicId,
       dentistId:       params.dentistId,
+      treatmentTypeId: params.treatmentTypeId,
       title:           params.title,
       toothCodes:      params.toothCodes,
       paymentMode:     params.paymentMode as any,

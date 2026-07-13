@@ -1211,6 +1211,7 @@ async function main() {
       patientId: "pat-1",
       clinicId: clinicA.id,
       dentistId: doctorHafiz.id,
+      treatmentTypeId: "tx-rct",
       title: "Root Canal Treatment — Tooth 16",
       status: "IN_PROGRESS",
       toothCodes: ["16"],
@@ -1230,6 +1231,7 @@ async function main() {
       patientId: "pat-2",
       clinicId: clinicA.id,
       dentistId: doctorHafiz.id,
+      treatmentTypeId: "tx-crown",
       title: "Porcelain Crown — Tooth 26",
       status: "IN_PROGRESS",
       toothCodes: ["26"],
@@ -1249,6 +1251,7 @@ async function main() {
       patientId: "pat-4",
       clinicId: clinicA.id,
       dentistId: doctorPriya.id,
+      treatmentTypeId: "tx-implant",
       title: "Single Implant — Tooth 46",
       status: "IN_PROGRESS",
       toothCodes: ["46"],
@@ -1269,6 +1272,7 @@ async function main() {
       patientId: "pat-5",
       clinicId: clinicA.id,
       dentistId: doctorHafiz.id,
+      treatmentTypeId: "tx-braces",
       title: "Orthodontic Braces Treatment",
       status: "ACCEPTED",
       toothCodes: [],
@@ -1296,16 +1300,9 @@ async function main() {
     { id: "ts-3-3", planId: plan3.id, templateId: "tst-imp-3", name: "Osseointegration Review",          order: 3, status: "IN_PROGRESS" as const, cost: 100,  completedAt: null },
     { id: "ts-3-4", planId: plan3.id, templateId: "tst-imp-4", name: "Abutment Placement",               order: 4, status: "PENDING" as const, cost: 500,  completedAt: null },
     { id: "ts-3-5", planId: plan3.id, templateId: "tst-imp-5", name: "Crown Delivery",                   order: 5, status: "PENDING" as const, cost: 1200, completedAt: null },
-    // Plan 4 — Braces
-    { id: "ts-4-1", planId: plan4.id, templateId: "tst-brc-1", name: "Records & Study Models",           order: 1, status: "PENDING" as const, cost: 200,  completedAt: null },
-    { id: "ts-4-2", planId: plan4.id, templateId: "tst-brc-2", name: "Banding / Bonding",                order: 2, status: "PENDING" as const, cost: 1500, completedAt: null },
-    { id: "ts-4-3", planId: plan4.id, templateId: "tst-brc-3", name: "Monthly Adjustment #1",            order: 3, status: "PENDING" as const, cost: 80,   completedAt: null },
-    { id: "ts-4-4", planId: plan4.id, templateId: "tst-brc-4", name: "Monthly Adjustment #2",            order: 4, status: "PENDING" as const, cost: 80,   completedAt: null },
-    { id: "ts-4-5", planId: plan4.id, templateId: "tst-brc-5", name: "Monthly Adjustment #3",            order: 5, status: "PENDING" as const, cost: 80,   completedAt: null },
-    { id: "ts-4-6", planId: plan4.id, templateId: "tst-brc-6", name: "Monthly Adjustment #4",            order: 6, status: "PENDING" as const, cost: 80,   completedAt: null },
-    { id: "ts-4-7", planId: plan4.id, templateId: "tst-brc-7", name: "Monthly Adjustment #5",            order: 7, status: "PENDING" as const, cost: 80,   completedAt: null },
-    { id: "ts-4-8", planId: plan4.id, templateId: "tst-brc-9", name: "De-banding",                       order: 8, status: "PENDING" as const, cost: 200,  completedAt: null },
-    { id: "ts-4-9", planId: plan4.id, templateId: "tst-brc-10", name: "Retainer Delivery",               order: 9, status: "PENDING" as const, cost: 300,  completedAt: null },
+    // Plan 4 — Braces (aligned to the Ortho scheme: Bonding 50 / Debond 50)
+    { id: "ts-4-1", planId: plan4.id, name: "Bonding", order: 1, status: "PENDING" as const, cost: 2750, completedAt: null },
+    { id: "ts-4-2", planId: plan4.id, name: "Debond",  order: 2, status: "PENDING" as const, cost: 2750, completedAt: null },
   ];
 
   for (const s of stagesData) {
