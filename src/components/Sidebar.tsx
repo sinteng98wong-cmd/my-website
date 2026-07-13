@@ -83,6 +83,7 @@ const NAV: NavEntry[] = [
       { key: "hr-home",           label: "HR Overview",       href: "/hr",                    managerOnly: true },
       { key: "hr-staff",          label: "Staff Directory",   href: "/hr/staff",              managerOnly: true },
       { key: "hr-schedule",       label: "Schedule",          href: "/hr/schedule"                              },
+      { key: "hr-roster",         label: "Weekly Roster",     href: "/hr/roster",             managerOnly: true },
       { key: "hr-leave",          label: "Leave",             href: "/hr/leave"                                 },
       { key: "hr-attendance",     label: "Attendance",        href: "/hr/attendance",         managerOnly: true },
       { key: "hr-payroll",        label: "Payroll",           href: "/hr/payroll",            managerOnly: true },

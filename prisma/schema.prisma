@@ -94,6 +94,7 @@ model Clinic {
   clinicReferralCommissions ReferralCommission[] @relation("ClinicReferralCommissions")
   userClinics      UserClinic[]
   schedules        Schedule[]
+  branchShifts     Shift[]          @relation("BranchShifts")
   clinicStock      ClinicStock[]
   receivedDOs      DeliveryOrder[]  @relation("ReceivingClinic")
   dispatchedDOs    DeliveryOrder[]  @relation("DispatchingClinic")
@@ -209,6 +210,7 @@ model User {
   doctorSchedules    Schedule[]     @relation("DoctorSchedule")
   nurseSchedules     Schedule[]     @relation("NurseSchedule")
   receptionistSchedules Schedule[]  @relation("ReceptionistSchedule")
+  shifts             Shift[]        @relation("UserShifts")
   doctorAppointments Appointment[]  @relation("DoctorAppointments")
   ledgerEdits        DailyLedger[]
   deletedPatients    Patient[]      @relation("PatientDeletedBy")
@@ -2725,4 +2727,29 @@ model PayoutScanRate {
 
   @@unique([clinicId, code])
   @@index([clinicId])
+}
+
+// ── Weekly staff rostering (Doctor / Nurse shifts across branches) ─────────
+enum ShiftStatus {
+  PENDING
+  APPROVED
+}
+
+model Shift {
+  id        String      @id @default(cuid())
+  userId    String
+  user      User        @relation("UserShifts", fields: [userId], references: [id])
+  branchId  String      // Clinic acts as the branch / location entity
+  branch    Clinic      @relation("BranchShifts", fields: [branchId], references: [id])
+  startTime DateTime
+  endTime   DateTime
+  status    ShiftStatus @default(PENDING)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  // A user cannot hold overlapping shifts even across different branches —
+  // enforced at the DB level by a btree_gist EXCLUDE constraint added in the
+  // migration (see migration.sql), plus the app-level conflict engine.
+  @@index([userId, startTime])
+  @@index([branchId, startTime])
 }

@@ -1560,6 +1560,34 @@ async function main() {
     }
   }
 
+  // ── Weekly roster shifts (current week) ────────────────────────────────
+  {
+    const mondayMYT = (() => {
+      const d = new Date(todayMYT + "T00:00:00+08:00");
+      const dow = (d.getUTCDay() + 6) % 7; // 0 = Monday
+      d.setUTCDate(d.getUTCDate() - dow);
+      return d.toLocaleDateString("en-CA", { timeZone: "Asia/Kuala_Lumpur" });
+    })();
+    const shiftAt = (dayOffset: number, from: string, to: string) => {
+      const d = new Date(mondayMYT + "T00:00:00+08:00");
+      d.setUTCDate(d.getUTCDate() + dayOffset);
+      const day = d.toLocaleDateString("en-CA", { timeZone: "Asia/Kuala_Lumpur" });
+      return { startTime: new Date(`${day}T${from}:00+08:00`), endTime: new Date(`${day}T${to}:00+08:00`) };
+    };
+    const sampleShifts = [
+      { userId: doctorHafiz.id, branchId: clinicA.id, ...shiftAt(0, "09:00", "17:00"), status: "APPROVED" as const },
+      { userId: doctorHafiz.id, branchId: clinicA.id, ...shiftAt(2, "09:00", "13:00"), status: "APPROVED" as const },
+      { userId: doctorHafiz.id, branchId: clinicB.id, ...shiftAt(3, "14:00", "18:00"), status: "PENDING"  as const }, // pulled to Clinic B
+      { userId: doctorPriya.id, branchId: clinicB.id, ...shiftAt(0, "09:00", "17:00"), status: "APPROVED" as const },
+      { userId: nurse.id,       branchId: clinicA.id, ...shiftAt(0, "08:00", "16:00"), status: "APPROVED" as const },
+      { userId: nurse.id,       branchId: clinicA.id, ...shiftAt(1, "08:00", "16:00"), status: "PENDING"  as const },
+    ];
+    for (const s of sampleShifts) {
+      const exists = await (prisma as any).shift.findFirst({ where: { userId: s.userId, startTime: s.startTime } });
+      if (!exists) await (prisma as any).shift.create({ data: s }).catch(() => {});
+    }
+  }
+
   console.log("✅ Sample data seeded!");
   console.log("");
   console.log("Login accounts (password: admin123)");
