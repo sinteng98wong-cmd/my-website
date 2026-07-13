@@ -427,6 +427,7 @@ export default async function CommissionPage({
         select: {
           id: true, billedAmount: true, labFee: true,
           treatmentType: { select: { code: true, name: true } },
+          visit: { select: { visitDate: true } },
           locumPayoutLines: { where: { doctorProfileId: signoffDoctorId }, select: { id: true, category: true, labFee: true, subType: true, treatmentPlanId: true } },
         },
       }),
@@ -442,6 +443,7 @@ export default async function CommissionPage({
 
     const catAmount = new Map<string, number>();
     const scanCount = new Map<string, number>();
+    const oneOffByDay = new Map<string, number>(); // YYYY-MM-DD → one-off net that day
     const seenLine = new Set<string>();
 
     // Progressive stage-completions in month (source B)
@@ -466,6 +468,9 @@ export default async function CommissionPage({
       if (staged) continue; // progressive counts only via completed stages (source B)
       const net = Math.max(0, Number(t.billedAmount) - Number(line?.labFee ?? t.labFee));
       catAmount.set("One-Off", (catAmount.get("One-Off") ?? 0) + net);
+      // Daily breakdown of one-off amounts, grouped by treatment (visit) date
+      const dayKey = new Date(t.visit.visitDate).toLocaleDateString("en-CA", { timeZone: "Asia/Kuala_Lumpur" });
+      oneOffByDay.set(dayKey, (oneOffByDay.get(dayKey) ?? 0) + net);
     }
 
     const categories = CATEGORY_ORDER
@@ -483,6 +488,10 @@ export default async function CommissionPage({
       .filter(s => s.patients > 0);
     const scanTotal = Math.round(scans.reduce((s, r) => s + r.net, 0) * 100) / 100;
 
+    const oneOffDays = Array.from(oneOffByDay.entries())
+      .map(([date, amount]) => ({ date, amount: Math.round(amount * 100) / 100 }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+
     monthly = {
       categories,
       grossTotal,
@@ -491,6 +500,8 @@ export default async function CommissionPage({
       scans,
       scanTotal,
       totalPayable: Math.round((professionalFee + scanTotal) * 100) / 100,
+      oneOffDays,
+      oneOffTotal: Math.round(oneOffDays.reduce((s, d) => s + d.amount, 0) * 100) / 100,
     };
   }
 

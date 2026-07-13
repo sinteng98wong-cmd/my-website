@@ -11,6 +11,8 @@ export type MonthlyData = {
   scans:           { code: string; label: string; patients: number; rate: number; net: number }[];
   scanTotal:       number;
   totalPayable:    number;
+  oneOffDays:      { date: string; amount: number }[]; // one-off amount grouped by treatment date
+  oneOffTotal:     number;
 };
 
 interface Props {
@@ -104,6 +106,32 @@ export function MonthlyCommissionPanel({ month, doctorName, data }: Props) {
         </table>
       </div>
 
+      {/* One-off amount by day (grouped by treatment date) */}
+      <div className="card overflow-hidden">
+        <div className="px-5 py-3 border-b border-slate-100 bg-slate-50/70">
+          <p className="font-semibold text-slate-900 text-sm">One-Off Treatments by Day</p>
+          <p className="text-[11px] text-slate-400 mt-0.5">Daily one-off collection (excludes staged cases and scans)</p>
+        </div>
+        {data.oneOffDays.length === 0 ? (
+          <p className="px-5 py-4 text-center text-sm text-slate-400">No one-off treatments this month</p>
+        ) : (
+          <table className="w-full text-sm">
+            <tbody>
+              {data.oneOffDays.map(d => (
+                <tr key={d.date} className="border-b border-slate-50">
+                  <td className="px-5 py-2 text-slate-700 tabular-nums">{prettyDate(d.date)}</td>
+                  <td className="px-5 py-2 tabular-nums text-right w-40">{RM(d.amount)}</td>
+                </tr>
+              ))}
+              <tr className="bg-slate-50 border-t-2 border-slate-200">
+                <td className="px-5 py-2.5 font-bold text-slate-900 uppercase text-xs tracking-wide">One-Off Total</td>
+                <td className="px-5 py-2.5 tabular-nums text-right font-bold text-slate-900">{RM(data.oneOffTotal)}</td>
+              </tr>
+            </tbody>
+          </table>
+        )}
+      </div>
+
       <p className="text-xs text-slate-400 px-1">
         Professional Fee = Total gross collection × the doctor&apos;s share. Scans pay a flat rate per scan
         (configurable in <Link href="/config/payout-rules" className="text-blue-600 hover:underline">Settings → Payout Rules</Link>),
@@ -111,4 +139,10 @@ export function MonthlyCommissionPanel({ month, doctorName, data }: Props) {
       </p>
     </div>
   );
+}
+
+/** e.g. "1/7" (day/month, MYT) */
+function prettyDate(iso: string): string {
+  const d = new Date(`${iso}T00:00:00+08:00`);
+  return `${d.toLocaleDateString("en-MY", { day: "numeric", timeZone: "Asia/Kuala_Lumpur" })}/${d.toLocaleDateString("en-MY", { month: "numeric", timeZone: "Asia/Kuala_Lumpur" })}`;
 }
