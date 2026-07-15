@@ -427,7 +427,7 @@ export default async function CommissionPage({
         select: {
           id: true, billedAmount: true, labFee: true,
           treatmentType: { select: { code: true, name: true } },
-          visit: { select: { visitDate: true } },
+          visit: { select: { visitDate: true, patient: { select: { name: true } } } },
           locumPayoutLines: { where: { doctorProfileId: signoffDoctorId }, select: { id: true, category: true, labFee: true, subType: true, treatmentPlanId: true } },
         },
       }),
@@ -435,7 +435,7 @@ export default async function CommissionPage({
         where: { doctorProfileId: signoffDoctorId, treatmentPlanId: { not: null }, treatmentPlan: { stages: { some: { completedAt: { gte: mStart, lt: mEnd } } } } },
         select: {
           id: true, labFee: true, subType: true, treatmentPlanId: true,
-          treatment: { select: { billedAmount: true, treatmentType: { select: { code: true } } } },
+          treatment: { select: { billedAmount: true, treatmentType: { select: { code: true, name: true } }, visit: { select: { patient: { select: { name: true } } } } } },
           treatmentPlan: { select: { stages: { select: { completedAt: true }, orderBy: { order: "asc" } } } },
         },
       }).catch(() => []),
@@ -445,6 +445,15 @@ export default async function CommissionPage({
     const scanCount = new Map<string, number>();
     const oneOffByDay = new Map<string, number>(); // YYYY-MM-DD → one-off net that day
     const seenLine = new Set<string>();
+
+    // Itemised case rows grouped by category (patient, treatment, sales, lab,
+    // net, stage % gained, earned)
+    type CaseItem = { patientName: string; treatmentName: string; sales: number; labFee: number; net: number; weightagePct: number; earned: number };
+    const caseByCat = new Map<string, CaseItem[]>();
+    const pushCase = (cat: string, item: CaseItem) => {
+      if (!caseByCat.has(cat)) caseByCat.set(cat, []);
+      caseByCat.get(cat)!.push(item);
+    };
 
     // Progressive stage-completions in month (source B)
     for (const l of monthStageLines as any[]) {
@@ -456,6 +465,15 @@ export default async function CommissionPage({
       const gained = Math.round(net * pct) / 100;
       const cat = scheme?.name ?? "One-Off";
       catAmount.set(cat, (catAmount.get(cat) ?? 0) + gained);
+      if (pct > 0) pushCase(cat, {
+        patientName:   l.treatment.visit.patient.name,
+        treatmentName: l.treatment.treatmentType.name,
+        sales:         Number(l.treatment.billedAmount),
+        labFee:        Number(l.labFee),
+        net,
+        weightagePct:  pct,
+        earned:        gained,
+      });
     }
 
     // Same-month treatments (source A): one-off net + scans; progressive already in B
@@ -468,6 +486,15 @@ export default async function CommissionPage({
       if (staged) continue; // progressive counts only via completed stages (source B)
       const net = Math.max(0, Number(t.billedAmount) - Number(line?.labFee ?? t.labFee));
       catAmount.set("One-Off", (catAmount.get("One-Off") ?? 0) + net);
+      pushCase("One-Off", {
+        patientName:   t.visit.patient.name,
+        treatmentName: t.treatmentType.name,
+        sales:         Number(t.billedAmount),
+        labFee:        Number(line?.labFee ?? t.labFee),
+        net,
+        weightagePct:  100,
+        earned:        net,
+      });
       // Daily breakdown of one-off amounts, grouped by treatment (visit) date
       const dayKey = new Date(t.visit.visitDate).toLocaleDateString("en-CA", { timeZone: "Asia/Kuala_Lumpur" });
       oneOffByDay.set(dayKey, (oneOffByDay.get(dayKey) ?? 0) + net);
@@ -492,6 +519,14 @@ export default async function CommissionPage({
       .map(([date, amount]) => ({ date, amount: Math.round(amount * 100) / 100 }))
       .sort((a, b) => a.date.localeCompare(b.date));
 
+    // Case-entitled detail grouped by category, in the same order as the summary
+    const caseDetails = CATEGORY_ORDER
+      .filter(key => (caseByCat.get(key)?.length ?? 0) > 0)
+      .map(key => {
+        const items = caseByCat.get(key)!;
+        return { key, label: CATEGORY_LABEL[key] ?? key, items, subtotal: Math.round(items.reduce((s, i) => s + i.earned, 0) * 100) / 100 };
+      });
+
     monthly = {
       categories,
       grossTotal,
@@ -502,6 +537,7 @@ export default async function CommissionPage({
       totalPayable: Math.round((professionalFee + scanTotal) * 100) / 100,
       oneOffDays,
       oneOffTotal: Math.round(oneOffDays.reduce((s, d) => s + d.amount, 0) * 100) / 100,
+      caseDetails,
     };
   }
 

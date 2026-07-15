@@ -13,6 +13,10 @@ export type MonthlyData = {
   totalPayable:    number;
   oneOffDays:      { date: string; amount: number }[]; // one-off amount grouped by treatment date
   oneOffTotal:     number;
+  caseDetails:     {
+    key: string; label: string; subtotal: number;
+    items: { patientName: string; treatmentName: string; sales: number; labFee: number; net: number; weightagePct: number; earned: number }[];
+  }[];
 };
 
 interface Props {
@@ -105,6 +109,49 @@ export function MonthlyCommissionPanel({ month, doctorName, data }: Props) {
           </tfoot>
         </table>
       </div>
+
+      {/* Case-entitled detail, grouped by treatment category */}
+      {data.caseDetails.length > 0 && (
+        <div className="space-y-3">
+          <p className="text-xs font-bold text-slate-700 uppercase tracking-wide px-1">Case Entitlement by Category</p>
+          {data.caseDetails.map(cat => (
+            <div key={cat.key} className="card overflow-hidden">
+              <div className="px-5 py-2.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between">
+                <p className="font-semibold text-slate-900 text-sm">{cat.label}</p>
+                <p className="text-sm font-semibold text-slate-800 tabular-nums">{RM(cat.subtotal)}</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="table-header">
+                    <tr>
+                      {["Patient", "Treatment", "Sales", "Lab Fee", "Net", "Stage %", "Earned"].map(h => (
+                        <th key={h} className="px-4 py-2 text-left text-[10px] font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cat.items.map((it, i) => (
+                      <tr key={i} className="border-b border-slate-50">
+                        <td className="px-4 py-2 text-slate-900">{it.patientName}</td>
+                        <td className="px-4 py-2 text-slate-700">{it.treatmentName}</td>
+                        <td className="px-4 py-2 tabular-nums">{RM(it.sales)}</td>
+                        <td className="px-4 py-2 tabular-nums text-slate-500">{it.labFee > 0 ? RM(it.labFee) : "—"}</td>
+                        <td className="px-4 py-2 tabular-nums">{RM(it.net)}</td>
+                        <td className="px-4 py-2 tabular-nums text-blue-700 font-medium">{it.weightagePct}%</td>
+                        <td className="px-4 py-2 tabular-nums font-medium">{RM(it.earned)}</td>
+                      </tr>
+                    ))}
+                    <tr className="bg-slate-50 border-t border-slate-200">
+                      <td colSpan={6} className="px-4 py-2 text-[10px] font-semibold text-slate-500 uppercase text-right">Subtotal</td>
+                      <td className="px-4 py-2 tabular-nums font-bold text-slate-800">{RM(cat.subtotal)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* One-off amount by day (grouped by treatment date) */}
       <div className="card overflow-hidden">
