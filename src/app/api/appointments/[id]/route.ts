@@ -14,6 +14,45 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const appt = await prisma.appointment.findUnique({ where: { id: params.id } });
   if (!appt) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  // Reschedule (calendar drag / resize): move start, change duration or doctor
+  if (action === "reschedule" || body.startTime || body.duration || body.doctorId) {
+    const startTime = body.startTime ? new Date(body.startTime) : appt.startTime;
+    const duration  = body.duration ? Number(body.duration) : appt.duration;
+    const doctorId  = body.doctorId ?? appt.doctorId;
+    const endTime   = new Date(startTime.getTime() + duration * 60_000);
+
+    // Conflict: the doctor must be free in the new slot (excluding this appt)
+    const clashes = await prisma.appointment.findMany({
+      where: {
+        id:       { not: params.id },
+        doctorId,
+        status:   { notIn: ["CANCELLED", "NO_SHOW"] },
+        startTime:{ gte: new Date(startTime.getTime() - 4 * 60 * 60_000), lt: endTime },
+      },
+      select: { startTime: true, duration: true, patient: { select: { name: true } } },
+    });
+    for (const c of clashes) {
+      const cEnd = new Date(new Date(c.startTime).getTime() + c.duration * 60_000);
+      if (cEnd > startTime) {
+        return NextResponse.json(
+          { error: `Doctor already has an appointment then (${c.patient.name})`, conflict: true },
+          { status: 409 },
+        );
+      }
+    }
+
+    const moved = await prisma.appointment.update({
+      where: { id: params.id },
+      data:  { startTime, duration, doctorId },
+      include: {
+        patient: { select: { id: true, name: true, patientRef: true } },
+        doctor:  { select: { id: true, name: true } },
+        clinic:  { select: { id: true, name: true } },
+      },
+    });
+    return NextResponse.json(moved);
+  }
+
   // Check-in: create a Visit and link it
   if (action === "checkin") {
     if (appt.visitId) {

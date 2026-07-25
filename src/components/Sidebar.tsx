@@ -51,6 +51,7 @@ const NAV: NavEntry[] = [
       { key: "patients",          label: "Patients",          href: "/patients"               },
       { key: "treatment-plans",  label: "Treatment Plans",   href: "/treatment-plans"        },
       { key: "appointments",     label: "Appointments",      href: "/appointments"           },
+      { key: "calendar",         label: "Calendar",          href: "/calendar"               },
       { key: "schedule",         label: "Schedule",          href: "/schedule"               },
       { key: "lab",              label: "Lab Work",          href: "/lab"                    },
     ],

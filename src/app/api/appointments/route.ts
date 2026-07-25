@@ -30,8 +30,13 @@ export async function GET(req: NextRequest) {
   const date     = sp.get("date");
   const month    = sp.get("month");
 
+  const from     = sp.get("from"); // ISO — for the calendar's visible range
+  const to       = sp.get("to");
+
   let timeFilter: any = {};
-  if (date) {
+  if (from && to) {
+    timeFilter = { gte: new Date(from), lt: new Date(to) };
+  } else if (date) {
     const dayStart = new Date(date + "T00:00:00+08:00");
     const dayEnd   = new Date(date + "T23:59:59+08:00");
     timeFilter = { gte: dayStart, lte: dayEnd };
