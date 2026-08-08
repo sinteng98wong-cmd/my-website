@@ -408,7 +408,7 @@ function PayrollTab({ staffProfileId, isManager }: { staffProfileId: string; isM
                 <td className="px-4 py-2">{RM(s.grossSalary)}</td>
                 <td className="px-4 py-2 text-red-600">{RM(Number(s.epfEmployee) + Number(s.socsoEmployee) + Number(s.incomeTax))}</td>
                 <td className="px-4 py-2 font-bold text-green-700">{RM(s.netSalary)}</td>
-                <td className="px-4 py-2"><span className={`text-xs px-2 py-0.5 rounded ${{DRAFT:"bg-slate-100 text-slate-500",APPROVED:"bg-blue-100 text-blue-700",PAID:"bg-green-100 text-green-700"}[s.payrollRun?.status as "DRAFT"|"APPROVED"|"PAID"] ?? ""}`}>{s.payrollRun?.status}</span></td>
+                <td className="px-4 py-2"><span className={`text-xs px-2 py-0.5 rounded ${{DRAFT:"bg-slate-100 text-slate-500",LOCKED:"bg-blue-100 text-blue-700",PAID:"bg-green-100 text-green-700"}[s.payrollRun?.status as "DRAFT"|"LOCKED"|"PAID"] ?? ""}`}>{s.payrollRun?.status}</span></td>
                 <td className="px-4 py-2 text-blue-600 text-xs">Details →</td>
               </tr>
             ))}

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 
 type Clinic = { id: string; name: string };
 const RM = (n: number) => new Intl.NumberFormat("ms-MY", { style: "currency", currency: "MYR" }).format(n);
-const STATUS: Record<string, string> = { DRAFT: "bg-slate-100 text-slate-600", PROCESSING: "bg-amber-100 text-amber-700", APPROVED: "bg-blue-100 text-blue-700", PAID: "bg-green-100 text-green-700" };
+const STATUS: Record<string, string> = { DRAFT: "bg-slate-100 text-slate-600", PROCESSING: "bg-amber-100 text-amber-700", LOCKED: "bg-blue-100 text-blue-700", PAID: "bg-green-100 text-green-700" };
 
 export function PayrollListClient({ clinics }: { clinics: Clinic[] }) {
   const router = useRouter();

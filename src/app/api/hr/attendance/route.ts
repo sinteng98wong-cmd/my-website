@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { guardLunchOt, guardMonthOpen } from "@/lib/payroll-config";
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -47,8 +48,14 @@ export async function POST(req: NextRequest) {
   if (!["SUPER_ADMIN", "CLINIC_MANAGER"].includes(role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const body = await req.json();
-  const { staffProfileId, clinicId, date, status, checkIn, checkOut, lateMinutes, overtimeMinutes, notes } = body;
+  const { staffProfileId, clinicId, date, status, checkIn, checkOut, lateMinutes, overtimeMinutes, lunchOtMinutes, notes } = body;
   if (!staffProfileId || !clinicId || !date) return NextResponse.json({ error: "staffProfileId, clinicId and date are required" }, { status: 422 });
+
+  const monthGuard = await guardMonthOpen(clinicId, new Date(date), role);
+  if (!monthGuard.ok) return NextResponse.json({ error: monthGuard.error }, { status: monthGuard.status });
+
+  const otGuard = await guardLunchOt(clinicId, lunchOtMinutes);
+  if (!otGuard.ok) return NextResponse.json({ error: otGuard.error }, { status: otGuard.status });
 
   const record = await prisma.attendanceRecord.upsert({
     where: { staffProfileId_date: { staffProfileId, date: new Date(date) } },
@@ -57,13 +64,15 @@ export async function POST(req: NextRequest) {
       status: status || "PRESENT",
       checkIn: checkIn ? new Date(checkIn) : undefined,
       checkOut: checkOut ? new Date(checkOut) : undefined,
-      lateMinutes, overtimeMinutes, notes, recordedById: userId,
+      lateMinutes, overtimeMinutes, lunchOtMinutes: lunchOtMinutes ?? 0, notes, recordedById: userId,
     },
     update: {
       status: status || "PRESENT",
       checkIn: checkIn ? new Date(checkIn) : undefined,
       checkOut: checkOut ? new Date(checkOut) : undefined,
-      lateMinutes, overtimeMinutes, notes, recordedById: userId,
+      lateMinutes, overtimeMinutes,
+      ...(lunchOtMinutes !== undefined ? { lunchOtMinutes: lunchOtMinutes ?? 0 } : {}),
+      notes, recordedById: userId,
     },
   });
   return NextResponse.json(record, { status: 201 });

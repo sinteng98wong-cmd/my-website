@@ -11,8 +11,9 @@ export async function GET() {
   const profile = await prisma.staffProfile.findUnique({ where: { userId }, select: { id: true } });
   if (!profile) return NextResponse.json([]);
 
+  // Only payslips HR has explicitly released reach the employee.
   const slips = await prisma.paySlip.findMany({
-    where: { staffProfileId: profile.id, payrollRun: { status: { in: ["APPROVED", "PAID"] } } },
+    where: { staffProfileId: profile.id, status: "RELEASED" },
     include: { payrollRun: { select: { id: true, month: true, status: true } } },
     orderBy: { payrollRun: { month: "desc" } },
   });
@@ -22,7 +23,8 @@ export async function GET() {
     payrollRunId: s.payrollRun.id,
     staffProfileId: s.staffProfileId,
     month: s.payrollRun.month,
-    status: s.payrollRun.status,
+    status: s.status,
+    releasedAt: s.releasedAt,
     grossSalary: Number(s.grossSalary),
     netSalary: Number(s.netSalary),
     downloadUrl: `/api/hr/payroll/${s.payrollRun.id}/slip/${s.staffProfileId}/pdf`,

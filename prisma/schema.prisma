@@ -166,6 +166,10 @@ model Clinic {
   monthlyRecons        MonthlyRecon[]
   panelRemittances     PanelRemittance[]
   doctorDailySignoffs  DoctorDailySignoff[]
+  // Payroll payment workflow
+  payrollConfig            ClinicPayrollConfig?
+  payrollBankPayments      PayrollBankPayment[]
+  attendanceMonthSubmissions AttendanceMonthSubmission[]
 
   @@index([entityId])
 }
@@ -268,6 +272,16 @@ model User {
   lockedRecons               MonthlyRecon[]           @relation("ReconLockedBy")
   confirmedMethodSettlements MethodSettlementEntry[]  @relation("MethodSettlementConfirmedBy")
   createdRemittances         PanelRemittance[]        @relation("PanelRemittanceCreatedBy")
+  // Payroll payment workflow relations
+  lockedPayrollRuns          PayrollRun[]                @relation("PayrollLocker")
+  firstApproverOfClinics     ClinicPayrollConfig[]       @relation("PayrollFirstApprover")
+  secondApproverOfClinics    ClinicPayrollConfig[]       @relation("PayrollSecondApprover")
+  approvedPaySlips           PaySlip[]                   @relation("PaySlipApprover")
+  releasedPaySlips           PaySlip[]                   @relation("PaySlipReleaser")
+  preparedBankPayments       PayrollBankPayment[]        @relation("BankPaymentPreparer")
+  approvedBankPayments       PayrollBankPayment[]        @relation("BankPaymentApprover")
+  rejectedBankPayments       PayrollBankPayment[]        @relation("BankPaymentRejecter")
+  submittedAttendanceMonths  AttendanceMonthSubmission[] @relation("AttendanceMonthSubmitter")
   createdAt            DateTime               @default(now())
 }
 
@@ -392,6 +406,7 @@ model StaffProfile {
   documents         StaffDocument[]
   employmentHistory EmploymentHistory[]
   licenses          License[]
+  headNurseOf       ClinicPayrollConfig[] @relation("ClinicHeadNurse")
 }
 
 model Attendance {
@@ -1718,6 +1733,9 @@ model AttendanceRecord {
   status          AttendanceStatus @default(PRESENT)
   lateMinutes     Int?
   overtimeMinutes Int?
+  /// OT worked through the lunch break. Only recordable when the clinic's
+  /// payroll config allows Lunch OT (ClinicPayrollConfig.lunchOtAllowed).
+  lunchOtMinutes  Int              @default(0)
   notes           String?
   recordedById    String?
   recordedBy      User?            @relation("AttendanceRecorder", fields: [recordedById], references: [id])
@@ -1905,7 +1923,7 @@ model PayrollRun {
   month        String         // "2026-06"
   clinicId     String
   clinic       Clinic         @relation(fields: [clinicId], references: [id])
-  status       String         // DRAFT | PROCESSING | APPROVED | PAID
+  status       String         // DRAFT | PROCESSING | LOCKED | PAID
   totalGross   Decimal        @db.Decimal(12,2)
   totalNet     Decimal        @db.Decimal(12,2)
   totalEpf     Decimal        @db.Decimal(12,2)
@@ -1916,8 +1934,13 @@ model PayrollRun {
   approvedById String?
   approvedBy   User?          @relation("PayrollApprover", fields: [approvedById], references: [id])
   approvedAt   DateTime?
+  // HR payroll lock — the gate that opens the payment approval workflow
+  lockedById   String?
+  lockedBy     User?          @relation("PayrollLocker", fields: [lockedById], references: [id])
+  lockedAt     DateTime?
   paidAt       DateTime?
   slips        PaySlip[]
+  bankPayments PayrollBankPayment[]
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
   @@unique([clinicId, month])
@@ -1952,9 +1975,108 @@ model PaySlip {
   daysPublicHoliday Int         @default(0)
   overtimeMinutes Int           @default(0)
   slipUrl         String?
+  // ── Payment approval workflow ──────────────────────────────────────────
+  // PENDING → APPROVED (1st approver) → PAID (2nd approver signs the bank
+  // payment) → RELEASED (HR hands the slip to the employee)
+  status          String        @default("PENDING")
+  approvedById    String?
+  approvedBy      User?         @relation("PaySlipApprover", fields: [approvedById], references: [id])
+  approvedAt      DateTime?
+  approvalNote    String?
+  bankPaymentId   String?
+  bankPayment     PayrollBankPayment? @relation(fields: [bankPaymentId], references: [id])
+  paidAt          DateTime?
+  releasedById    String?
+  releasedBy      User?         @relation("PaySlipReleaser", fields: [releasedById], references: [id])
+  releasedAt      DateTime?
   createdAt       DateTime      @default(now())
   @@index([payrollRunId])
   @@index([staffProfileId])
+  @@index([bankPaymentId])
+  @@index([status])
+}
+
+enum BankPaymentStatus {
+  DRAFT
+  PENDING_APPROVAL
+  PAID
+  REJECTED
+}
+
+/// A bank payment batch prepared by Accounts for a set of approved payslips.
+/// Accounts prepares/uploads it but may never approve it — only the clinic's
+/// configured 2nd payment approver can, which releases the money (PAID).
+model PayrollBankPayment {
+  id              String            @id @default(cuid())
+  paymentRef      String            @unique   // BP-202606-001
+  clinicId        String
+  clinic          Clinic            @relation(fields: [clinicId], references: [id])
+  payrollRunId    String
+  payrollRun      PayrollRun        @relation(fields: [payrollRunId], references: [id])
+  status          BankPaymentStatus @default(PENDING_APPROVAL)
+  totalAmount     Decimal           @db.Decimal(12,2)
+  bankName        String?
+  accountNo       String?
+  paymentDate     DateTime?
+  fileUrl         String?           // uploaded bank payment / giro file
+  fileName        String?
+  notes           String?
+  preparedById    String
+  preparedBy      User              @relation("BankPaymentPreparer", fields: [preparedById], references: [id])
+  preparedAt      DateTime          @default(now())
+  approvedById    String?
+  approvedBy      User?             @relation("BankPaymentApprover", fields: [approvedById], references: [id])
+  approvedAt      DateTime?
+  approvalNote    String?
+  rejectedById    String?
+  rejectedBy      User?             @relation("BankPaymentRejecter", fields: [rejectedById], references: [id])
+  rejectedAt      DateTime?
+  rejectionReason String?
+  slips           PaySlip[]
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  @@index([clinicId, status])
+  @@index([payrollRunId])
+}
+
+/// Per-clinic payroll configuration. Payment approvers, the branch Head Nurse
+/// who may submit monthly attendance, and the Lunch OT permission all live
+/// here so nothing is hard-coded to the PV director/PIC.
+model ClinicPayrollConfig {
+  id                      String        @id @default(cuid())
+  clinicId                String        @unique
+  clinic                  Clinic        @relation(fields: [clinicId], references: [id])
+  // Payment approvers (independent of the Payment Voucher director/PIC)
+  firstApproverId         String?
+  firstApprover           User?         @relation("PayrollFirstApprover", fields: [firstApproverId], references: [id])
+  secondApproverId        String?
+  secondApprover          User?         @relation("PayrollSecondApprover", fields: [secondApproverId], references: [id])
+  // Branch Head Nurse — the only staff member who may submit monthly attendance
+  headNurseStaffProfileId String?
+  headNurse               StaffProfile? @relation("ClinicHeadNurse", fields: [headNurseStaffProfileId], references: [id])
+  // Lunch OT is a clinic-level permission, not an attendance exception reason
+  lunchOtAllowed          Boolean       @default(false)
+  lunchOtMaxMinutes       Int           @default(60)
+  createdAt               DateTime      @default(now())
+  updatedAt               DateTime      @updatedAt
+  @@index([headNurseStaffProfileId])
+}
+
+/// Monthly attendance sign-off for a branch. Submitted by the designated
+/// Head Nurse only; payroll for the month cannot be locked without it.
+model AttendanceMonthSubmission {
+  id            String   @id @default(cuid())
+  clinicId      String
+  clinic        Clinic   @relation(fields: [clinicId], references: [id])
+  month         String   // "2026-06"
+  staffCount    Int      @default(0)
+  recordCount   Int      @default(0)
+  notes         String?
+  submittedById String
+  submittedBy   User     @relation("AttendanceMonthSubmitter", fields: [submittedById], references: [id])
+  submittedAt   DateTime @default(now())
+  @@unique([clinicId, month])
+  @@index([month])
 }
 
 model ClaimLimit {
