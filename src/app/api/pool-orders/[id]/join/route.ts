@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
+import { assertClinicAccess } from "@/lib/clinic-access";
 
 const JoinSchema = z.object({
   clinicId: z.string().min(1),
@@ -35,6 +36,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const d = parsed.data;
   const userId = (session.user as any).id as string;
+
+  // The clinic being committed to this pool comes from the request body, so a
+  // caller may only add a clinic they are authorized for.
+  const access = await assertClinicAccess(role, userId, d.clinicId);
+  if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
+
   const requestedAmount = d.items.reduce((s, i) => s + i.requestedQty * i.unitCost, 0);
 
   const existing = await prisma.poolParticipant.findUnique({

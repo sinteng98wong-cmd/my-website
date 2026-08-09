@@ -2,16 +2,23 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { INVENTORY_ROLES, assertClinicAccess, clinicScopeFor, clinicWhere } from "@/lib/clinic-access";
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session?.user) return NextResponse.json({ error: "Unauthenticated" }, { status: 401 });
+  const role   = (session.user as any).role as string;
+  const userId = (session.user as any).id   as string;
+  if (!INVENTORY_ROLES.includes(role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const clinicId = req.nextUrl.searchParams.get("clinicId");
   if (!clinicId) return NextResponse.json({ error: "clinicId required" }, { status: 400 });
 
+  const scope = await clinicScopeFor(role, userId, clinicId);
+  if (!scope.ok) return NextResponse.json({ error: scope.error }, { status: scope.status });
+
   const batches = await prisma.stockBatch.findMany({
-    where: { clinicId, remainingQty: { gt: 0 } },
+    where: { ...clinicWhere(scope.clinicIds), remainingQty: { gt: 0 } },
     include: {
       item:     { select: { id: true, name: true, sku: true, unit: true, category: true } },
       supplier: { select: { id: true, name: true } },
@@ -25,8 +32,10 @@ export async function GET(req: NextRequest) {
 /** POST — manually register a batch for existing stock (traceability only, does not change ClinicStock qty) */
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
-  const role    = (session?.user as any)?.role;
-  if (!["SUPER_ADMIN", "FINANCE", "CLINIC_MANAGER", "STOREKEEPER"].includes(role)) {
+  if (!session?.user) return NextResponse.json({ error: "Unauthenticated" }, { status: 401 });
+  const role   = (session.user as any).role as string;
+  const userId = (session.user as any).id   as string;
+  if (!INVENTORY_ROLES.includes(role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -36,6 +45,9 @@ export async function POST(req: NextRequest) {
   if (!clinicId || !itemId || !batchNumber || !quantity) {
     return NextResponse.json({ error: "clinicId, itemId, batchNumber and quantity are required" }, { status: 422 });
   }
+
+  const access = await assertClinicAccess(role, userId, clinicId);
+  if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
 
   // Verify the clinic actually has this item in stock
   const stock = await prisma.clinicStock.findUnique({

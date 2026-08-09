@@ -2,12 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { SUPPLIER_READ_ROLES, SUPPLIER_WRITE_ROLES } from "@/lib/clinic-access";
 
-const MANAGE_ROLES = ["SUPER_ADMIN", "FINANCE", "CLINIC_MANAGER"];
+
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session?.user) return NextResponse.json({ error: "Unauthenticated" }, { status: 401 });
+  const role = (session.user as any).role as string;
+  if (!SUPPLIER_READ_ROLES.includes(role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const suppliers = await prisma.supplier.findMany({
     orderBy: { name: "asc" },
@@ -23,7 +26,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
   const role = (session?.user as any)?.role;
-  if (!MANAGE_ROLES.includes(role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!SUPPLIER_WRITE_ROLES.includes(role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const body = await req.json();
   const { name, code, contactName, email, phone, address } = body;

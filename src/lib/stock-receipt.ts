@@ -112,7 +112,8 @@ export interface PoolDirectReceiveContext {
   /** Item ids the participant actually ordered. */
   participantItemIds: string[];
   requestedItemIds: string[];
-  role: string;
+  /** Caller carries group-wide clinic scope (see lib/clinic-access). */
+  hasGlobalScope: boolean;
   userClinicIds: string[];
 }
 
@@ -127,7 +128,7 @@ export function checkPoolDirectReceive(ctx: PoolDirectReceiveContext): Guard {
 
   if (!ctx.participant) return deny(400, "Clinic is not a participant");
 
-  if (ctx.role !== "SUPER_ADMIN" && !ctx.userClinicIds.includes(ctx.participant.clinicId))
+  if (!ctx.hasGlobalScope && !ctx.userClinicIds.includes(ctx.participant.clinicId))
     return deny(403, "Forbidden: you can only receive stock into your own clinic");
 
   if (ctx.participant.receivedAt)

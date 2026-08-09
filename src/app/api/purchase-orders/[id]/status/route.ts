@@ -11,6 +11,7 @@ import {
   isReceiptStatus,
   receiptDelta,
 } from "@/lib/stock-receipt";
+import { INVENTORY_ROLES, assertClinicAccess } from "@/lib/clinic-access";
 import { z } from "zod";
 
 const Schema = z.object({
@@ -20,8 +21,9 @@ const Schema = z.object({
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   const session = await getServerSession(authOptions);
   if (!session?.user) return NextResponse.json({ error: "Unauthenticated" }, { status: 401 });
-  const role = (session.user as any).role as string;
-  if (!["SUPER_ADMIN", "FINANCE", "CLINIC_MANAGER", "STOREKEEPER"].includes(role)) {
+  const role   = (session.user as any).role as string;
+  const userId = (session.user as any).id   as string;
+  if (!INVENTORY_ROLES.includes(role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -30,6 +32,10 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     include: { lines: true },
   });
   if (!po) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  // Goods may only be booked in by someone authorized for the receiving clinic.
+  const access = await assertClinicAccess(role, userId, po.clinicId);
+  if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
 
   const body   = await req.json().catch(() => null);
   const parsed = Schema.safeParse(body);

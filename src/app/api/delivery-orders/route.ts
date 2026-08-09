@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { generateDoRef } from "@/lib/ref-generator";
+import { clinicScopeFor } from "@/lib/clinic-access";
 
 const ALLOWED_ROLES = ["SUPER_ADMIN", "FINANCE", "CLINIC_MANAGER", "STOREKEEPER"];
 
@@ -28,20 +29,17 @@ export async function GET(req: NextRequest) {
   const status = req.nextUrl.searchParams.get("status");
   const clinicIdFilter = req.nextUrl.searchParams.get("clinicId");
 
-  // Get user's clinics
-  const userClinicIds = role === "SUPER_ADMIN" || role === "FINANCE"
-    ? undefined
-    : (await prisma.userClinic.findMany({ where: { userId }, select: { clinicId: true } }))
-        .map((uc) => uc.clinicId);
+  // A requested clinicId narrows the caller's own scope — it never replaces it.
+  const scope = await clinicScopeFor(role, userId, clinicIdFilter);
+  if (!scope.ok) return NextResponse.json({ error: scope.error }, { status: scope.status });
+  const userClinicIds = scope.clinicIds ?? undefined;
 
   const uninvoiced = req.nextUrl.searchParams.get("uninvoiced") === "1";
 
   const where: any = {};
   if (status) where.status = status;
   if (uninvoiced) where.stockInvoiceId = null;
-  if (clinicIdFilter) {
-    where.OR = [{ fromClinicId: clinicIdFilter }, { toClinicId: clinicIdFilter }];
-  } else if (userClinicIds) {
+  if (userClinicIds) {
     where.OR = [
       { fromClinicId: { in: userClinicIds } },
       { toClinicId: { in: userClinicIds } },

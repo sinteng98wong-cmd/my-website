@@ -1,11 +1,21 @@
 import { requirePermission } from "@/lib/rbac";
 import { prisma } from "@/lib/prisma";
 import Link from "next/link";
+import { redirect } from "next/navigation";
+import { clinicScopeFor, clinicWhere } from "@/lib/clinic-access";
 
 export default async function StockPage() {
-  await requirePermission("stock:manage");
+  const session = await requirePermission("stock:manage");
+  const role   = (session.user as any).role as string;
+  const userId = (session.user as any).id   as string;
+
+  // Branch users see only their own clinics' stock — enforced in the query,
+  // not by hiding rows in the markup.
+  const scope = await clinicScopeFor(role, userId);
+  if (!scope.ok) redirect("/dashboard");
 
   const clinicStocks = await prisma.clinicStock.findMany({
+    where: clinicWhere(scope.clinicIds),
     include: {
       item: true,
       clinic: { select: { name: true } },

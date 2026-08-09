@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { receiveStock } from "@/lib/stock";
 import { checkPoolDirectReceive } from "@/lib/stock-receipt";
+import { getUserClinicIds, hasGlobalClinicScope } from "@/lib/clinic-access";
 
 const Schema = z.object({
   clinicId: z.string().min(1),
@@ -38,9 +39,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const { clinicId, lines } = parsed.data;
   const participant = pool.participants.find((p) => p.clinicId === clinicId) ?? null;
 
-  const userClinicIds = role === "SUPER_ADMIN"
-    ? []
-    : (await prisma.userClinic.findMany({ where: { userId }, select: { clinicId: true } })).map((uc) => uc.clinicId);
+  const userClinicIds = hasGlobalClinicScope(role) ? [] : await getUserClinicIds(userId);
 
   const guard = checkPoolDirectReceive({
     poolStatus:         pool.status,
@@ -48,7 +47,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     participant:        participant ? { clinicId: participant.clinicId, receivedAt: participant.receivedAt } : null,
     participantItemIds: participant?.items.map((i) => i.itemId) ?? [],
     requestedItemIds:   lines.map((l) => l.itemId),
-    role,
+    hasGlobalScope: hasGlobalClinicScope(role),
     userClinicIds,
   });
   if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status });

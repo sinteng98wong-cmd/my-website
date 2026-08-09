@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { clinicScopeFor } from "@/lib/clinic-access";
 import { z } from "zod";
 
 // ── Internal DO invoice ────────────────────────────────────────────────────
@@ -37,12 +38,31 @@ const SupplierSchema = z.object({
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session?.user) return NextResponse.json({ error: "Unauthenticated" }, { status: 401 });
-  const role = (session.user as any).role as string;
+  const role   = (session.user as any).role as string;
+  const userId = (session.user as any).id   as string;
   if (!["SUPER_ADMIN", "FINANCE", "CLINIC_MANAGER"].includes(role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  // Branch users only see invoices covering their own clinics' movements.
+  const scope = await clinicScopeFor(role, userId);
+  if (!scope.ok) return NextResponse.json({ error: scope.error }, { status: scope.status });
+  const clinicIds = scope.clinicIds;
+
   const invoices = await prisma.stockInvoice.findMany({
+    ...(clinicIds
+      ? {
+          where: {
+            OR: [
+              { purchaseOrder: { clinicId: { in: clinicIds } } },
+              { deliveryOrders: { some: { OR: [
+                { toClinicId:   { in: clinicIds } },
+                { fromClinicId: { in: clinicIds } },
+              ] } } },
+            ],
+          },
+        }
+      : {}),
     include: {
       fromEntity:    { select: { id: true, legalName: true } },
       supplier:      { select: { id: true, name: true } },

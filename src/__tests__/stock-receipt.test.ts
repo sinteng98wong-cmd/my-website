@@ -127,7 +127,7 @@ describe("pool direct receive", () => {
     participant: { clinicId: "clinic-a", receivedAt: null as Date | null },
     participantItemIds: ["item-1", "item-2"],
     requestedItemIds: ["item-1"],
-    role: "STOREKEEPER",
+    hasGlobalScope: false,
     userClinicIds: ["clinic-a"],
     ...over,
   });
@@ -150,13 +150,13 @@ describe("pool direct receive", () => {
     expect(checkPoolDirectReceive(ctx({ userClinicIds: [] })).ok).toBe(false);
   });
 
-  it("lets Super Admin receive on behalf of a clinic", () => {
-    expect(checkPoolDirectReceive(ctx({ role: "SUPER_ADMIN", userClinicIds: [] })).ok).toBe(true);
+  it("lets a group-wide role receive on behalf of a clinic", () => {
+    expect(checkPoolDirectReceive(ctx({ hasGlobalScope: true, userClinicIds: [] })).ok).toBe(true);
   });
 
-  it("still refuses Super Admin a duplicate receive", () => {
+  it("still refuses a group-wide role a duplicate receive", () => {
     const g = checkPoolDirectReceive(ctx({
-      role: "SUPER_ADMIN", userClinicIds: [],
+      hasGlobalScope: true, userClinicIds: [],
       participant: { clinicId: "clinic-a", receivedAt: new Date() },
     }));
     expect(g).toMatchObject({ ok: false, status: 409 });

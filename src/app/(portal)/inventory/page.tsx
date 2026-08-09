@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import Link from "next/link";
 import { ClinicFilter } from "@/components/ClinicFilter";
+import { clinicScopeFor, clinicWhere } from "@/lib/clinic-access";
 
 const ALLOWED = ["SUPER_ADMIN", "CLINIC_MANAGER", "STOREKEEPER"];
 
@@ -21,12 +22,26 @@ export default async function InventoryDashboardPage({
   const role = (session.user as any).role as string;
   if (!ALLOWED.includes(role)) redirect("/dashboard");
 
-  const clinicId = searchParams.clinicId;
+  const userId = (session.user as any).id as string;
+
+  // Data-layer scoping: a branch user's queries are restricted to their own
+  // clinics, and a clinicId in the URL can only narrow that, never widen it.
+  const allowed = await clinicScopeFor(role, userId);
+  if (!allowed.ok) redirect("/dashboard");
+
+  const scope = await clinicScopeFor(role, userId, searchParams.clinicId);
+  // An out-of-scope clinicId falls back to the user's own clinics.
+  const dataScope = scope.ok ? scope.clinicIds : allowed.clinicIds;
+  const clinicId = scope.ok ? searchParams.clinicId : undefined;
 
   const [clinics, lowStockItems, openPools] = await Promise.all([
-    prisma.clinic.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } }),
+    prisma.clinic.findMany({
+      where: allowed.clinicIds ? { id: { in: allowed.clinicIds } } : {},
+      orderBy: { name: "asc" },
+      select: { id: true, name: true },
+    }),
     prisma.clinicStock.findMany({
-      where: clinicId ? { clinicId } : {},
+      where: clinicWhere(dataScope),
       include: {
         item: { select: { id: true, name: true, sku: true, category: true, unit: true } },
         clinic: { select: { id: true, name: true } },

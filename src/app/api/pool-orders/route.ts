@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { generatePoRef } from "@/lib/ref-generator";
+import { assertClinicAccess } from "@/lib/clinic-access";
 
 const ALLOWED_ROLES = ["SUPER_ADMIN", "FINANCE", "CLINIC_MANAGER", "STOREKEEPER"];
 
@@ -78,8 +79,13 @@ export async function POST(req: NextRequest) {
   }
 
   const d = parsed.data;
-  const poRef = await generatePoRef();
   const userId = (session.user as any).id as string;
+
+  // A pool may only be raised on behalf of a clinic the caller is authorized for.
+  const access = await assertClinicAccess(role, userId, d.initiatingClinicId);
+  if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
+
+  const poRef = await generatePoRef();
 
   const initiatorAmount = d.initiatorItems.reduce(
     (s, item) => s + item.requestedQty * item.unitCost,

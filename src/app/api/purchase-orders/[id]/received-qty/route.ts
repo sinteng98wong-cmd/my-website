@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { checkReceivedQtyEdit } from "@/lib/stock-receipt";
+import { INVENTORY_ROLES, assertClinicAccess } from "@/lib/clinic-access";
 import { z } from "zod";
 
 /** Statuses where the goods have not been fully booked in yet. */
@@ -18,8 +19,9 @@ const Schema = z.object({
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   const session = await getServerSession(authOptions);
   if (!session?.user) return NextResponse.json({ error: "Unauthenticated" }, { status: 401 });
-  const role = (session.user as any).role as string;
-  if (!["SUPER_ADMIN", "FINANCE", "CLINIC_MANAGER", "STOREKEEPER"].includes(role)) {
+  const role   = (session.user as any).role as string;
+  const userId = (session.user as any).id   as string;
+  if (!INVENTORY_ROLES.includes(role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -29,8 +31,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   const { lineId, receivedQty, batchNumber, expiryDate } = parsed.data;
 
-  const po = await prisma.purchaseOrder.findUnique({ where: { id: params.id }, select: { status: true } });
+  const po = await prisma.purchaseOrder.findUnique({ where: { id: params.id }, select: { status: true, clinicId: true } });
   if (!po) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const access = await assertClinicAccess(role, userId, po.clinicId);
+  if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
+
   if (!EDITABLE_STATUSES.includes(po.status))
     return NextResponse.json({ error: `Cannot edit received quantity on a ${po.status} purchase order` }, { status: 409 });
 

@@ -2,11 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { SUPPLIER_READ_ROLES, SUPPLIER_WRITE_ROLES } from "@/lib/clinic-access";
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   const role = (session?.user as any)?.role as string;
-  if (!session?.user || !["SUPER_ADMIN", "FINANCE", "CLINIC_MANAGER"].includes(role))
+  if (!session?.user || !SUPPLIER_READ_ROLES.includes(role))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const search = new URL(req.url).searchParams.get("search") ?? "";
@@ -24,7 +25,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
   const role = (session?.user as any)?.role as string;
-  if (!session?.user || !["SUPER_ADMIN", "FINANCE"].includes(role))
+  if (!session?.user || !SUPPLIER_WRITE_ROLES.includes(role))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const body = await req.json();

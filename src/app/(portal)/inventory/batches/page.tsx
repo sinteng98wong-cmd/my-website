@@ -1,7 +1,9 @@
 import { requirePermission } from "@/lib/rbac";
 import { prisma } from "@/lib/prisma";
 import { getSelectedClinicId } from "@/lib/selected-clinic";
+import { clinicScopeFor } from "@/lib/clinic-access";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { BatchesClient } from "./BatchesClient";
 
 export default async function StockBatchesPage({
@@ -9,14 +11,24 @@ export default async function StockBatchesPage({
 }: {
   searchParams: { clinicId?: string };
 }) {
-  await requirePermission("stock:manage");
+  const session = await requirePermission("stock:manage");
+  const role   = (session.user as any).role as string;
+  const userId = (session.user as any).id   as string;
+
+  const allowed = await clinicScopeFor(role, userId);
+  if (!allowed.ok) redirect("/dashboard");
 
   const clinics = await prisma.clinic.findMany({
+    where:   allowed.clinicIds ? { id: { in: allowed.clinicIds } } : {},
     orderBy: { name: "asc" },
     select:  { id: true, name: true },
   });
 
-  const selectedId = searchParams.clinicId ?? getSelectedClinicId() ?? clinics[0]?.id;
+  // A clinicId from the URL or the selected-clinic cookie is only honoured
+  // when it is one of the caller's own clinics.
+  const requested = searchParams.clinicId ?? getSelectedClinicId();
+  const scope = await clinicScopeFor(role, userId, requested);
+  const selectedId = scope.ok && requested ? requested : clinics[0]?.id;
 
   const batches = selectedId
     ? await prisma.stockBatch.findMany({
