@@ -58,10 +58,55 @@ describe("value impact", () => {
 });
 
 describe("period stamping", () => {
-  it("uses the UTC year and month", () => {
+  // The clinics operate in Malaysia (UTC+8, no DST), so the accounting period
+  // follows MYT rather than UTC. The last eight hours of every UTC month are
+  // already the next month locally, and that is where they must be stamped.
+
+  it("stamps ordinary mid-month dates", () => {
     expect(periodOf(new Date("2026-08-09T12:00:00Z"))).toBe("2026-08");
-    expect(periodOf(new Date("2026-01-01T00:00:00Z"))).toBe("2026-01");
-    expect(periodOf(new Date("2026-12-31T23:59:59Z"))).toBe("2026-12");
+    expect(periodOf(new Date("2026-01-15T03:30:00Z"))).toBe("2026-01");
+    expect(periodOf(new Date("2026-11-20T18:45:00Z"))).toBe("2026-11");
+  });
+
+  it("puts 2026-07-31 23:00 UTC into August — it is 1 Aug 07:00 in Malaysia", () => {
+    expect(periodOf(new Date("2026-07-31T23:00:00Z"))).toBe("2026-08");
+  });
+
+  it("puts 2026-08-01 00:00 UTC into August", () => {
+    expect(periodOf(new Date("2026-08-01T00:00:00Z"))).toBe("2026-08");
+  });
+
+  it("closes a month at 16:00 UTC, which is midnight MYT", () => {
+    // 15:59:59Z is 23:59:59 on the 31st in MYT — still August.
+    expect(periodOf(new Date("2026-08-31T15:59:59Z"))).toBe("2026-08");
+    // 16:00:00Z is 00:00:00 on 1 September in MYT — September.
+    expect(periodOf(new Date("2026-08-31T16:00:00Z"))).toBe("2026-09");
+  });
+
+  it("rolls the year over on the MYT boundary, not the UTC one", () => {
+    // 31 Dec 23:59:59 UTC is already 1 Jan 07:59:59 in Malaysia.
+    expect(periodOf(new Date("2026-12-31T23:59:59Z"))).toBe("2027-01");
+    expect(periodOf(new Date("2026-12-31T15:59:59Z"))).toBe("2026-12");
+    expect(periodOf(new Date("2026-12-31T16:00:00Z"))).toBe("2027-01");
+  });
+
+  it("handles February and leap years on the MYT boundary", () => {
+    expect(periodOf(new Date("2028-02-29T15:59:59Z"))).toBe("2028-02");
+    expect(periodOf(new Date("2028-02-29T16:00:00Z"))).toBe("2028-03");
+  });
+
+  it("does not depend on the server timezone", () => {
+    // Same instant expressed with different offsets must yield one period.
+    const instant = "2026-07-31T23:00:00Z";
+    expect(periodOf(new Date(instant))).toBe("2026-08");
+    expect(periodOf(new Date("2026-08-01T07:00:00+08:00"))).toBe("2026-08");
+    expect(periodOf(new Date("2026-07-31T19:00:00-04:00"))).toBe("2026-08");
+    expect(new Date("2026-08-01T07:00:00+08:00").getTime()).toBe(new Date(instant).getTime());
+  });
+
+  it("pads single-digit months", () => {
+    expect(periodOf(new Date("2026-03-05T00:00:00Z"))).toBe("2026-03");
+    expect(periodOf(new Date("2026-09-30T15:00:00Z"))).toBe("2026-09");
   });
 });
 

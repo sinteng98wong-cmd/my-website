@@ -44,9 +44,27 @@ export function directionFor(type: StockMovementType): StockDirection {
   return DIRECTIONS[type];
 }
 
-/** Accounting period a movement falls into. */
+/** Malaysia is UTC+8 year-round — no daylight saving since 1982. */
+const MYT_OFFSET_MS = 8 * 60 * 60 * 1000;
+
+/**
+ * Accounting period a movement falls into, in Malaysia time.
+ *
+ * The clinics operate in MYT, so a movement at 07:00 on 1 August is August
+ * business — but that instant is 31 July 23:00 UTC. Deriving the period from
+ * UTC put the last eight hours of every month into the previous period, which
+ * would misstate monthly stock valuation and, once period locking exists,
+ * reject postings against a month the user considers open.
+ *
+ * The offset is applied to the timestamp and the result read back with the
+ * UTC accessors, so the answer never depends on the server's own timezone —
+ * this returns the same period on a UTC host and a UTC+8 host. That matches
+ * the `+08:00` convention already used for month boundaries elsewhere
+ * (appointments, locum payout).
+ */
 export function periodOf(date: Date): string {
-  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+  const myt = new Date(date.getTime() + MYT_OFFSET_MS);
+  return `${myt.getUTCFullYear()}-${String(myt.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -93,8 +111,11 @@ export interface LedgerSource {
   sourceLineId?: string | null;
   reference:     string;
   userId?:       string | null;
-  movementAt?:   Date;
   note?:         string | null;
+  // `movementAt` is deliberately not accepted. The posting time is always the
+  // moment the movement is written, so the period cannot be chosen by a
+  // caller. Backdating a movement would let stock be posted into a period that
+  // has already been reported on, and no caller has ever needed it.
 }
 
 export interface PostMovementInput extends LedgerSource {
@@ -126,7 +147,7 @@ export async function postMovement(client: LedgerClient, input: PostMovementInpu
   const valueDelta = input.valueDelta !== undefined
     ? round2(input.valueDelta)
     : valueDeltaFor(direction, qtyIn, qtyOut, unitCost);
-  const movementAt = input.movementAt ?? new Date();
+  const movementAt = new Date();
   const avgCostAfter = round4(input.avgCostAfter);
 
   return client.stockMovement.create({
