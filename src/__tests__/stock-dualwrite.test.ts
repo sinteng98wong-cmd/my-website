@@ -19,11 +19,17 @@ jest.mock("@/lib/ref-generator", () => ({
 
 const movements: any[] = [];
 const stockRow = { quantity: 20, avgUnitCost: 5 };
+let batchSeq = 0;
 
 const prismaMock: any = {
   userClinic: { findMany: jest.fn(), findFirst: jest.fn() },
   clinicStock: { update: jest.fn(async () => ({})), findUnique: jest.fn(async () => stockRow) },
-  stockBatch:  { create: jest.fn(async () => ({ id: "batch-1" })) },
+  stockBatch: {
+    create:     jest.fn(async ({ data }: any) => ({ id: `batch-${++batchSeq}`, ...data })),
+    findMany:   jest.fn(async () => [] as any[]),
+    updateMany: jest.fn(async () => ({ count: 1 })),
+  },
+  dOLineBatch: { create: jest.fn(async ({ data }: any) => ({ id: `dlb-${data.doLineId}`, ...data })) },
   stockItem:   { findUnique: jest.fn(async () => ({ name: "Gloves" })) },
   stockMovement: {
     create: jest.fn(async ({ data }: any) => {
@@ -120,10 +126,14 @@ describe("PO receipt dual-writes", () => {
 });
 
 describe("delivery order dual-writes", () => {
+  const doLine = (over: any = {}) => ({
+    id: "dol-1", itemId: "item-1", quantity: 10, receivedQty: null, unitCost: 5,
+    batchNumber: null, expiryDate: null, batchAllocations: [], ...over,
+  });
   const doOrder = (over: any = {}) => ({
     id: "do-1", doRef: "DO-2026-001", fromClinicId: A, toClinicId: "clinic-b", status: "APPROVED",
     fromClinic: { entity: { id: "e1" } },
-    lines: [{ id: "dol-1", itemId: "item-1", quantity: 10, receivedQty: null, unitCost: 5, batchNumber: null, expiryDate: null }],
+    lines: [doLine()],
     ...over,
   });
 
@@ -159,7 +169,7 @@ describe("delivery order dual-writes", () => {
   it("records a short delivery as an explicit variance instead of losing it", async () => {
     prismaMock.deliveryOrder.findUnique.mockResolvedValue(doOrder({
       status: "IN_TRANSIT",
-      lines: [{ id: "dol-1", itemId: "item-1", quantity: 10, receivedQty: 8, unitCost: 5, batchNumber: null, expiryDate: null }],
+      lines: [doLine({ receivedQty: 8 })],
     }));
     await doStatus(req({ status: "RECEIVED" }), { params: { id: "do-1" } });
     expect(movements.map((m) => m.type)).toEqual(["TRANSFER_IN", "TRANSFER_VARIANCE_OUT"]);
@@ -174,7 +184,7 @@ describe("delivery order dual-writes", () => {
   it("posts no variance when the delivery arrives complete", async () => {
     prismaMock.deliveryOrder.findUnique.mockResolvedValue(doOrder({
       status: "IN_TRANSIT",
-      lines: [{ id: "dol-1", itemId: "item-1", quantity: 10, receivedQty: 10, unitCost: 5, batchNumber: null, expiryDate: null }],
+      lines: [doLine({ receivedQty: 10 })],
     }));
     await doStatus(req({ status: "RECEIVED" }), { params: { id: "do-1" } });
     expect(movements.map((m) => m.type)).toEqual(["TRANSFER_IN"]);

@@ -10,6 +10,7 @@ import {
   isExpired,
   isWriteOff,
   movementTypeForReason,
+  pinnedBatchError,
   REASONS,
   requiresApproval,
   unbatchedAvailable,
@@ -201,6 +202,57 @@ describe("13. unbatched fallback", () => {
     const r = allocateFefo([batch({ remainingQty: 2 })], 10, { unbatchedAvailable: 3, asOf: NOW });
     expect(r.shortfall).toBe(5);
     expect(allocationsReconcile(r.allocations, 10)).toBe(false);
+  });
+});
+
+describe("14-17. a pinned batch is the only source", () => {
+  const pinned = batch({ id: "a", batchNumber: "A", expiryDate: d("2026-09-01"), remainingQty: 4 });
+  const other  = batch({ id: "b", batchNumber: "B", expiryDate: d("2026-12-01"), remainingQty: 50 });
+
+  it("15. never falls back to another batch", () => {
+    const r = allocateFefo([pinned, other], 10, { unbatchedAvailable: 0, asOf: NOW, pinnedBatchId: "a" });
+    expect(r.allocations).toEqual([
+      { batchId: "a", batchNumber: "A", expiryDate: d("2026-09-01"), quantity: 4 },
+    ]);
+    expect(r.shortfall).toBe(6);
+  });
+
+  it("16. never falls back to unbatched stock", () => {
+    const r = allocateFefo([pinned], 10, { unbatchedAvailable: 100, asOf: NOW, pinnedBatchId: "a" });
+    expect(r.allocations.every((a) => a.batchId === "a")).toBe(true);
+    expect(r.shortfall).toBe(6);
+  });
+
+  it("14. reports the shortage against the batch that was asked for", () => {
+    const r = allocateFefo([pinned, other], 10, { unbatchedAvailable: 40, asOf: NOW, pinnedBatchId: "a" });
+    expect(r.pinned).toEqual({ batchId: "a", batchNumber: "A", available: 4, reason: "SHORTAGE" });
+    expect(pinnedBatchError(r.pinned!, 10, "Gloves")).toContain("4 available, 10 requested");
+  });
+
+  it("14. satisfies the issue when the pinned batch does cover it", () => {
+    const r = allocateFefo([pinned, other], 3, { unbatchedAvailable: 0, asOf: NOW, pinnedBatchId: "a" });
+    expect(r.shortfall).toBe(0);
+    expect(r.pinned).toBeNull();
+    expect(allocationsReconcile(r.allocations, 3)).toBe(true);
+  });
+
+  it("14. distinguishes an expired pin from a short one", () => {
+    const stale = batch({ id: "a", batchNumber: "A", expiryDate: d("2026-01-01"), remainingQty: 50 });
+    const r = allocateFefo([stale], 5, { unbatchedAvailable: 0, asOf: NOW, pinnedBatchId: "a" });
+    expect(r.pinned?.reason).toBe("EXPIRED");
+    expect(pinnedBatchError(r.pinned!, 5)).toContain("expired");
+  });
+
+  it("14. reports a pin at a batch that no longer has stock", () => {
+    const r = allocateFefo([other], 5, { unbatchedAvailable: 0, asOf: NOW, pinnedBatchId: "gone" });
+    expect(r.pinned?.reason).toBe("MISSING");
+    expect(r.allocations).toEqual([]);
+  });
+
+  it("17. leaves unpinned allocation on FEFO with its unbatched fallback", () => {
+    const r = allocateFefo([other, pinned], 10, { unbatchedAvailable: 40, asOf: NOW });
+    expect(r.allocations.map((a) => a.batchId)).toEqual(["a", "b"]);
+    expect(r.shortfall).toBe(0);
   });
 });
 

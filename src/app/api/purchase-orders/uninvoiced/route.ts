@@ -20,7 +20,7 @@ export async function GET() {
     where: {
       ...clinicWhere(scope.clinicIds),
       status:        { in: ["RECEIVED", "PARTIAL"] },
-      stockInvoices: { none: {} },   // exclude POs already linked to an invoice
+      stockInvoice:  { is: null },   // exclude POs already linked to an invoice
     },
     include: {
       clinic:   { select: { id: true, name: true } },

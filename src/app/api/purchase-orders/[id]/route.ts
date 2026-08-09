@@ -17,7 +17,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       clinic:    { select: { id: true, name: true } },
       supplier:  { select: { id: true, name: true, email: true, phone: true } },
       raisedBy:  { select: { id: true, name: true } },
-      stockInvoices: { select: { id: true, invoiceRef: true, totalAmount: true, sst: true, issuedAt: true } },
+      stockInvoice: { select: { id: true, invoiceRef: true, totalAmount: true, sst: true, issuedAt: true } },
       lines: {
         include: { item: { select: { id: true, name: true, sku: true, unit: true, category: true } } },
       },

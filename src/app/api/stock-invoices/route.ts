@@ -36,6 +36,14 @@ const SupplierSchema = z.object({
   })).min(1),
 });
 
+/** True when an error is a Postgres unique violation on the given column. */
+function isUniqueViolation(e: unknown, column: string): boolean {
+  const err = e as { code?: string; meta?: { target?: string[] | string } };
+  if (err?.code !== "P2002") return false;
+  const target = err.meta?.target;
+  return (Array.isArray(target) ? target.join(",") : String(target ?? "")).includes(column);
+}
+
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session?.user) return NextResponse.json({ error: "Unauthenticated" }, { status: 401 });
@@ -213,54 +221,27 @@ export async function POST(req: NextRequest) {
       where: { id: purchaseOrderId },
       include: {
         lines: { include: { item: { select: { id: true, name: true } } } },
+        stockInvoice: { select: { invoiceRef: true } },
         clinic: true,
       },
     });
 
     if (!po) return NextResponse.json({ error: "Purchase order not found" }, { status: 404 });
+
+    // A purchase order carries exactly one supplier invoice. A second one
+    // would reprice the same receipt again and silently inflate stock value,
+    // so it is refused here — before anything is posted — and again by the
+    // atomic claim and the unique constraint below.
+    if (po.stockInvoice)
+      return NextResponse.json(
+        { error: `Purchase order ${po.poRef} is already covered by invoice "${po.stockInvoice.invoiceRef}". Raise a credit note or amendment against that invoice instead.` },
+        { status: 409 }
+      );
+
     if (!["RECEIVED", "PARTIAL"].includes(po.status))
       return NextResponse.json({ error: "PO must be in RECEIVED or PARTIAL status to invoice" }, { status: 400 });
 
     const priceMap = new Map(lineUpdates.map((u) => [u.lineId, u.invoicedUnitCost]));
-
-    // Update POLine unit costs to actual invoiced prices
-    for (const line of po.lines) {
-      const invoicedCost = priceMap.get(line.id) ?? Number(line.unitCost);
-      await prisma.pOLine.update({ where: { id: line.id }, data: { unitCost: invoicedCost } });
-
-      // Correct avgUnitCost at the receiving clinic
-      const originalCost = Number(line.unitCost);
-      const costDiff = invoicedCost - originalCost;
-      if (Math.abs(costDiff) > 0.001) {
-        const cs = await prisma.clinicStock.findUnique({
-          where: { clinicId_itemId: { clinicId: po.clinicId, itemId: line.itemId } },
-        });
-        if (cs && cs.quantity > 0) {
-          const qty = line.receivedQty ?? line.quantity;
-          const correction = costDiff * qty;
-          const newAvg = Math.max(0, (Number(cs.avgUnitCost ?? invoicedCost) * cs.quantity + correction) / cs.quantity);
-          await prisma.$transaction(async (tx) => {
-            await tx.clinicStock.update({
-              where: { clinicId_itemId: { clinicId: po.clinicId, itemId: line.itemId } },
-              data:  { avgUnitCost: newAvg },
-            });
-            await postMovement(tx, {
-              clinicId: po.clinicId, itemId: line.itemId, type: "REVALUATION",
-              quantity: 0, unitCost: invoicedCost, valueDelta: correction,
-              balanceAfter: cs.quantity, avgCostAfter: newAvg,
-              sourceType: "STOCK_INVOICE", sourceId: purchaseOrderId, sourceLineId: line.id,
-              reference: invoiceRef, postingKey: postingKeys.revaluePo(invoiceRef, line.id),
-              userId, note: `Repriced from ${originalCost} to ${invoicedCost}`,
-            });
-          });
-        }
-      }
-    }
-
-    const totalAmount = po.lines.reduce((s, l) => {
-      const cost = priceMap.get(l.id) ?? Number(l.unitCost);
-      return s + (l.receivedQty ?? l.quantity) * cost;
-    }, 0);
 
     // Derive entity from receiving clinic
     const clinic = await prisma.clinic.findUnique({
@@ -268,32 +249,88 @@ export async function POST(req: NextRequest) {
       include: { entity: { select: { id: true } } },
     });
 
-    const invoice = await prisma.stockInvoice.create({
-      data: {
-        source:          "SUPPLIER",
-        invoiceRef,
-        fromEntityId:    clinic!.entity.id,
-        supplierId,
-        purchaseOrderId,
-        month,
-        totalAmount,
-        sst,
-        issuedAt: invoiceDate ? new Date(invoiceDate) : new Date(),
-      },
-      include: {
-        fromEntity: { select: { legalName: true } },
-        supplier:   { select: { name: true } },
-        purchaseOrder: { select: { poRef: true } },
-      },
-    });
+    const totalAmount = po.lines.reduce((s, l) => {
+      const cost = priceMap.get(l.id) ?? Number(l.unitCost);
+      return s + (l.receivedQty ?? l.quantity) * cost;
+    }, 0);
 
-    // Mark PO as INVOICED
-    await prisma.purchaseOrder.update({
-      where: { id: purchaseOrderId },
-      data:  { status: "INVOICED" },
-    });
+    // Everything below is one transaction: the claim, the repricing, the
+    // revaluations and the invoice itself either all happen or none do.
+    try {
+      const invoice = await prisma.$transaction(async (tx) => {
+        // One-shot claim on the invoiceable statuses. Two requests arriving
+        // together race here and exactly one wins, so neither the check above
+        // nor a stale read can let both revalue.
+        const claimed = await tx.purchaseOrder.updateMany({
+          where: { id: purchaseOrderId, status: { in: ["RECEIVED", "PARTIAL"] } },
+          data:  { status: "INVOICED" },
+        });
+        if (claimed.count === 0) throw new Error("PO_ALREADY_INVOICED");
 
-    return NextResponse.json(invoice, { status: 201 });
+        // Update POLine unit costs to actual invoiced prices
+        for (const line of po.lines) {
+          const invoicedCost = priceMap.get(line.id) ?? Number(line.unitCost);
+          await tx.pOLine.update({ where: { id: line.id }, data: { unitCost: invoicedCost } });
+
+          // Correct avgUnitCost at the receiving clinic
+          const originalCost = Number(line.unitCost);
+          const costDiff = invoicedCost - originalCost;
+          if (Math.abs(costDiff) <= 0.001) continue;
+
+          const cs = await tx.clinicStock.findUnique({
+            where: { clinicId_itemId: { clinicId: po.clinicId, itemId: line.itemId } },
+          });
+          if (!cs || cs.quantity <= 0) continue;
+
+          const qty = line.receivedQty ?? line.quantity;
+          const correction = costDiff * qty;
+          const newAvg = Math.max(0, (Number(cs.avgUnitCost ?? invoicedCost) * cs.quantity + correction) / cs.quantity);
+          await tx.clinicStock.update({
+            where: { clinicId_itemId: { clinicId: po.clinicId, itemId: line.itemId } },
+            data:  { avgUnitCost: newAvg },
+          });
+          await postMovement(tx, {
+            clinicId: po.clinicId, itemId: line.itemId, type: "REVALUATION",
+            quantity: 0, unitCost: invoicedCost, valueDelta: correction,
+            balanceAfter: cs.quantity, avgCostAfter: newAvg,
+            sourceType: "STOCK_INVOICE", sourceId: purchaseOrderId, sourceLineId: line.id,
+            reference: invoiceRef, postingKey: postingKeys.revaluePo(invoiceRef, line.id),
+            userId, note: `Repriced from ${originalCost} to ${invoicedCost}`,
+          });
+        }
+
+        return tx.stockInvoice.create({
+          data: {
+            source:          "SUPPLIER",
+            invoiceRef,
+            fromEntityId:    clinic!.entity.id,
+            supplierId,
+            purchaseOrderId,
+            month,
+            totalAmount,
+            sst,
+            issuedAt: invoiceDate ? new Date(invoiceDate) : new Date(),
+          },
+          include: {
+            fromEntity: { select: { legalName: true } },
+            supplier:   { select: { name: true } },
+            purchaseOrder: { select: { poRef: true } },
+          },
+        });
+      }, { maxWait: 15_000, timeout: 30_000 });
+
+      return NextResponse.json(invoice, { status: 201 });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg === "PO_ALREADY_INVOICED" || isUniqueViolation(e, "purchaseOrderId"))
+        return NextResponse.json(
+          { error: `Purchase order ${po.poRef} has already been invoiced. Nothing was posted.` },
+          { status: 409 }
+        );
+      if (isUniqueViolation(e, "invoiceRef"))
+        return NextResponse.json({ error: `Invoice number "${invoiceRef}" is already recorded.` }, { status: 400 });
+      throw e;
+    }
   }
 
   return NextResponse.json({ error: "Invalid source" }, { status: 422 });

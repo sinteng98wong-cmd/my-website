@@ -10,17 +10,10 @@
  * the value.
  */
 import { prisma } from "@/lib/prisma";
-import { deductStock } from "@/lib/stock";
+import { BatchAllocationError, deductStock, type DeductOutcome } from "@/lib/stock";
 import { postingKeys } from "@/lib/stock-ledger";
-import {
-  allocateFefo,
-  allocationsReconcile,
-  allowsExpiredBatches,
-  checkAvailability,
-  movementTypeForReason,
-  unbatchedAvailable,
-  type Allocation,
-} from "@/lib/stock-issue";
+import { allowsExpiredBatches, checkAvailability, movementTypeForReason } from "@/lib/stock-issue";
+import type { Allocation } from "@/lib/stock-batch";
 import type { StockIssueReason } from "@prisma/client";
 
 export type PostOutcome =
@@ -56,13 +49,16 @@ export async function postStockIssue(stockIssueId: string, userId: string): Prom
       });
       if (claimed.count === 0) throw new Error("STOCK_ISSUE_ALREADY_POSTED");
 
-      // Deduct + ledger first: this takes the row lock for each (clinic,item)
-      // and refuses outright if stock is short, so nothing below can oversell.
-      await deductStock(
+      // One controlled mutation: the row lock, the sufficiency check, the
+      // ledger movement and the physical batch depletion all happen here.
+      // A pinned line is satisfied by that batch alone — deductStock refuses
+      // rather than quietly topping up from elsewhere.
+      const outcomes = await deductStock(
         issue.clinicId,
         issue.lines.map((l) => ({
           itemId: l.itemId,
           quantity: l.quantity,
+          batchId: l.batchId ?? null,
           postingKey: postingKeys.stockIssue(l.id),
           sourceLineId: l.id,
           note: l.note ?? issue.reason,
@@ -75,54 +71,30 @@ export async function postStockIssue(stockIssueId: string, userId: string): Prom
           sourceId: issue.id,
           reference: issue.reference,
           userId,
+          allowExpiredBatches: allowExpired,
         },
         tx
       );
 
-      for (const line of issue.lines) {
-        // Batches are read under the ClinicStock row lock held by deductStock,
-        // so this view of remainingQty cannot be raced by another issue.
-        const batches = await tx.stockBatch.findMany({
-          where: {
-            clinicId: issue.clinicId,
-            itemId: line.itemId,
-            remainingQty: { gt: 0 },
-            ...(line.batchId ? { id: line.batchId } : {}),
-          },
-          orderBy: [{ expiryDate: "asc" }, { receivedAt: "asc" }],
-        });
+      const byLine = new Map<string, DeductOutcome>(outcomes.map((o) => [o.sourceLineId!, o]));
 
+      for (const line of issue.lines) {
+        const outcome = byLine.get(line.id);
+        if (!outcome) continue;
+
+        // The weighted average in force at the time of the issue, which is
+        // exactly what the ledger movement was valued at.
         const stock = await tx.clinicStock.findUnique({
           where: { clinicId_itemId: { clinicId: issue.clinicId, itemId: line.itemId } },
-          select: { quantity: true, avgUnitCost: true },
+          select: { avgUnitCost: true },
         });
-        // Post-deduction balance plus what this line took back = pre-issue level.
-        const preIssueQty = (stock?.quantity ?? 0) + line.quantity;
         const unitCost = stock?.avgUnitCost ? Number(stock.avgUnitCost) : 0;
 
-        const allocatable = batches.map((b) => ({
-          id: b.id, batchNumber: b.batchNumber, expiryDate: b.expiryDate, remainingQty: b.remainingQty,
-        }));
+        await recordAllocations(tx, line.id, outcome.allocations);
 
-        const { allocations, shortfall } = allocateFefo(allocatable, line.quantity, {
-          unbatchedAvailable: unbatchedAvailable(preIssueQty, allocatable),
-          allowExpired,
-        });
-
-        if (shortfall > 0 || !allocationsReconcile(allocations, line.quantity))
-          throw new Error(
-            `ALLOCATION_SHORTFALL:${line.item.name}:${shortfall}`
-          );
-
-        await depleteAndRecord(tx, line.id, allocations);
-
-        const movement = await tx.stockMovement.findUnique({
-          where: { postingKey: postingKeys.stockIssue(line.id) },
-          select: { id: true },
-        });
         await tx.stockIssueLine.update({
           where: { id: line.id },
-          data: { unitCost: unitCost.toFixed(4), movementId: movement?.id ?? null },
+          data: { unitCost: unitCost.toFixed(4), movementId: outcome.movementId },
         });
 
         totalQty += line.quantity;
@@ -141,14 +113,7 @@ export async function postStockIssue(stockIssueId: string, userId: string): Prom
     const msg = e instanceof Error ? e.message : String(e);
     if (msg === "STOCK_ISSUE_ALREADY_POSTED")
       return { ok: false, status: 409, error: "This stock issue has already been posted" };
-    if (msg.startsWith("ALLOCATION_SHORTFALL:")) {
-      const [, itemName] = msg.split(":");
-      return {
-        ok: false,
-        status: 409,
-        error: `Not enough batch stock to cover ${itemName}. Check batch quantities and expiry before issuing.`,
-      };
-    }
+    if (e instanceof BatchAllocationError) return { ok: false, status: 409, error: e.message };
     if (msg.startsWith("Insufficient stock"))
       return { ok: false, status: 409, error: msg };
     throw e;
@@ -157,16 +122,12 @@ export async function postStockIssue(stockIssueId: string, userId: string): Prom
   return { ok: true, movements: issue.lines.length, totalQty, totalValue: Math.round(totalValue * 100) / 100 };
 }
 
-/** Decrement each allocated batch conditionally and record what was taken. */
-async function depleteAndRecord(tx: any, lineId: string, allocations: Allocation[]) {
+/**
+ * Record what each line physically took. The batches themselves were already
+ * depleted by deductStock under the row lock; this is the audit trail.
+ */
+async function recordAllocations(tx: any, lineId: string, allocations: Allocation[]) {
   for (const a of allocations) {
-    if (a.batchId) {
-      const { count } = await tx.stockBatch.updateMany({
-        where: { id: a.batchId, remainingQty: { gte: a.quantity } },
-        data:  { remainingQty: { decrement: a.quantity } },
-      });
-      if (count === 0) throw new Error(`ALLOCATION_SHORTFALL:batch ${a.batchNumber}:${a.quantity}`);
-    }
     await tx.stockIssueAllocation.create({
       data: {
         lineId,

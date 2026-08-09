@@ -19,7 +19,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const order = await prisma.deliveryOrder.findUnique({
     where: { id: params.id },
     include: {
-      lines: true,
+      lines: { include: { batchAllocations: true } },
       fromClinic: { include: { entity: { select: { id: true } } } },
     },
   });
@@ -88,7 +88,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         data:  { status: "IN_TRANSIT", dispatchedAt: new Date() },
       });
       if (claimed.count === 0) return null;
-      await deductStock(
+      const outcomes = await deductStock(
         order.fromClinicId,
         order.lines.map((l) => ({
           itemId: l.itemId, quantity: l.quantity,
@@ -100,6 +100,22 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         },
         tx
       );
+      // Record which physical batches actually left, so the receiving clinic
+      // recreates the same identities rather than inventing new ones. Written
+      // inside the claimed transition, so it happens exactly once.
+      for (const o of outcomes) {
+        for (const a of o.allocations) {
+          await tx.dOLineBatch.create({
+            data: {
+              doLineId:      o.sourceLineId!,
+              sourceBatchId: a.batchId,
+              batchNumber:   a.batchNumber,
+              expiryDate:    a.expiryDate,
+              quantity:      a.quantity,
+            },
+          });
+        }
+      }
       return tx.deliveryOrder.findUnique({ where: { id: params.id } });
     });
     if (!updated) return NextResponse.json({ error: "Delivery order is no longer awaiting dispatch" }, { status: 409 });
@@ -115,12 +131,28 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     // The full dispatched quantity is received in, then any shortfall is
     // posted as an explicit variance owned by the receiving branch. The
     // difference is recorded, never silently discarded.
+    //
+    // Batch identity is carried, not recreated from scratch: whatever the
+    // source clinic depleted at dispatch is what arrives here. A line that
+    // moved unbatched stock stays unbatched. Only when dispatch recorded no
+    // allocation at all does the manually entered batch on the line apply.
+    const carried = (l: (typeof order.lines)[number]) => {
+      const identified = l.batchAllocations.filter((a) => a.batchNumber || a.expiryDate);
+      if (!identified.length) return undefined;
+      return identified.map((a) => ({
+        batchNumber: a.batchNumber,
+        expiryDate:  a.expiryDate,
+        quantity:    a.quantity,
+      }));
+    };
+
     const receiveLines = order.lines.map((l) => ({
       itemId:      l.itemId,
       receivedQty: l.quantity,
       unitCost:    Number(l.unitCost),
       batchNumber: l.batchNumber ?? null,
       expiryDate:  l.expiryDate  ?? null,
+      batches:     carried(l),
       doLineId:    l.id,
       postingKey:  postingKeys.doReceipt(l.id),
       sourceLineId: l.id,

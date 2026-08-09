@@ -67,6 +67,7 @@ afterAll(async () => {
     await prisma.stockBatch.deleteMany({ where: { clinicId: { in: clinicIds } } });
     await prisma.clinicStock.deleteMany({ where: { clinicId: { in: clinicIds } } });
     await prisma.stockInvoice.deleteMany({ where: { invoiceRef: { startsWith: TAG } } });
+    await prisma.dOLineBatch.deleteMany({ where: { doLine: { do: { fromClinicId: { in: clinicIds } } } } });
     await prisma.dOLine.deleteMany({ where: { do: { fromClinicId: { in: clinicIds } } } });
     await prisma.deliveryOrder.deleteMany({ where: { fromClinicId: { in: clinicIds } } });
     await prisma.pOLine.deleteMany({ where: { po: { clinicId: { in: clinicIds } } } });

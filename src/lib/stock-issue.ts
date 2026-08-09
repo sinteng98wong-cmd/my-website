@@ -123,88 +123,23 @@ export function checkAvailability(available: number, requested: number, itemName
 }
 
 // ── FEFO allocation ─────────────────────────────────────────────────────────
+//
+// Batch allocation now lives in lib/stock-batch, because every stock-out needs
+// it — not just issues. Re-exported here so the issue rules read as one piece.
 
-export interface AllocatableBatch {
-  id: string;
-  batchNumber: string;
-  expiryDate: Date | null;
-  remainingQty: number;
-}
-
-export interface Allocation {
-  batchId: string | null;
-  batchNumber: string | null;
-  expiryDate: Date | null;
-  quantity: number;
-}
-
-export interface AllocationResult {
-  allocations: Allocation[];
-  /** Quantity that no batch could cover and no unbatched stock backed. */
-  shortfall: number;
-}
-
-/**
- * First Expiry, First Out.
- *
- * Batches are consumed earliest-expiry first. Batches with no expiry date go
- * last — an unknown expiry is not an early one. Anything the batches cannot
- * cover falls back to an explicit unbatched allocation, up to the unbatched
- * stock actually on hand, so it stays distinguishable from real batch stock
- * instead of being invented.
- */
-export function allocateFefo(
-  batches: AllocatableBatch[],
-  quantity: number,
-  options: { unbatchedAvailable: number; allowExpired?: boolean; asOf?: Date }
-): AllocationResult {
-  const asOf = options.asOf ?? new Date();
-  const allowExpired = options.allowExpired ?? false;
-
-  const eligible = batches
-    .filter((b) => b.remainingQty > 0)
-    .filter((b) => allowExpired || !b.expiryDate || b.expiryDate >= asOf)
-    .sort((a, b) => {
-      if (a.expiryDate && b.expiryDate) return a.expiryDate.getTime() - b.expiryDate.getTime();
-      if (a.expiryDate) return -1;   // dated batches before undated ones
-      if (b.expiryDate) return 1;
-      return a.batchNumber.localeCompare(b.batchNumber);
-    });
-
-  const allocations: Allocation[] = [];
-  let outstanding = quantity;
-
-  for (const b of eligible) {
-    if (outstanding <= 0) break;
-    const take = Math.min(b.remainingQty, outstanding);
-    allocations.push({ batchId: b.id, batchNumber: b.batchNumber, expiryDate: b.expiryDate, quantity: take });
-    outstanding -= take;
-  }
-
-  // Explicit unbatched fallback for stock that has no batch record behind it.
-  if (outstanding > 0 && options.unbatchedAvailable > 0) {
-    const take = Math.min(options.unbatchedAvailable, outstanding);
-    allocations.push({ batchId: null, batchNumber: null, expiryDate: null, quantity: take });
-    outstanding -= take;
-  }
-
-  return { allocations, shortfall: Math.max(0, outstanding) };
-}
-
-/** Stock on hand that no batch record accounts for. */
-export function unbatchedAvailable(clinicStockQty: number, batches: AllocatableBatch[]): number {
-  const batched = batches.reduce((s, b) => s + Math.max(0, b.remainingQty), 0);
-  return Math.max(0, clinicStockQty - batched);
-}
-
-/** Allocations must add up to exactly what was issued. */
-export function allocationsReconcile(allocations: Allocation[], quantity: number): boolean {
-  return allocations.reduce((s, a) => s + a.quantity, 0) === quantity;
-}
-
-export function isExpired(batch: { expiryDate: Date | null }, asOf: Date = new Date()): boolean {
-  return !!batch.expiryDate && batch.expiryDate < asOf;
-}
+export {
+  allocateBatches as allocateFefo,
+  unbatchedAvailable,
+  allocationsReconcile,
+  isExpired,
+  pinnedBatchError,
+} from "./stock-batch";
+export type {
+  AllocatableBatch,
+  Allocation,
+  AllocationResult,
+  AllocationOptions,
+} from "./stock-batch";
 
 // ── Approval ────────────────────────────────────────────────────────────────
 

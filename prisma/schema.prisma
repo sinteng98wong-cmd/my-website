@@ -1046,6 +1046,7 @@ model StockBatch {
   movements   StockMovement[]
   issueLines  StockIssueLine[]       @relation("StockIssueLineBatch")
   allocations StockIssueAllocation[] @relation("StockIssueAllocationBatch")
+  transfers   DOLineBatch[]          @relation("DOLineBatchSource")
   @@index([clinicId, itemId])
   @@index([expiryDate])
   @@index([clinicId, expiryDate])
@@ -1443,7 +1444,32 @@ model DOLine {
   batchNumber String?       // batch number assigned on receipt
   expiryDate  DateTime?     // expiry date assigned on receipt
   notes       String?
+  /// Which physical batches this line took at dispatch, so the receiving
+  /// clinic recreates the same identities instead of minting new ones.
+  batchAllocations DOLineBatch[]
   @@index([doId])
+}
+
+/// A physical batch carried by one delivery order line.
+///
+/// Written at dispatch from what the source clinic actually depleted, and read
+/// at receipt to recreate the same batch identity at the destination. Without
+/// it a transfer would create destination batch quantity out of nothing while
+/// the source batch stayed full.
+model DOLineBatch {
+  id            String      @id @default(cuid())
+  doLineId      String
+  doLine        DOLine      @relation(fields: [doLineId], references: [id])
+  /// Batch depleted at source. Null when the source stock was unbatched.
+  sourceBatchId String?
+  sourceBatch   StockBatch? @relation("DOLineBatchSource", fields: [sourceBatchId], references: [id])
+  /// Identity to recreate at the destination. Null = unbatched, not invented.
+  batchNumber   String?
+  expiryDate    DateTime?
+  quantity      Int
+  createdAt     DateTime    @default(now())
+  @@index([doLineId])
+  @@index([sourceBatchId])
 }
 
 enum InvoiceSource {
@@ -1459,7 +1485,10 @@ model StockInvoice {
   fromEntity      Entity          @relation(fields: [fromEntityId], references: [id])
   supplierId      String?
   supplier        Supplier?       @relation(fields: [supplierId], references: [id])
-  purchaseOrderId String?
+  /// Unique: a purchase order carries at most one supplier invoice. Postgres
+  /// allows many NULLs, so internal (DO-based) invoices are unaffected. This is
+  /// the database-level backstop against revaluing the same receipt twice.
+  purchaseOrderId String?         @unique
   purchaseOrder   PurchaseOrder?  @relation(fields: [purchaseOrderId], references: [id])
   month           String
   totalAmount     Decimal         @db.Decimal(10,2)
@@ -1593,7 +1622,7 @@ model PurchaseOrder {
   confirmedAt   DateTime?
   receivedAt    DateTime?
   lines         POLine[]
-  stockInvoices StockInvoice[]
+  stockInvoice  StockInvoice?
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
   @@index([supplierId, status])

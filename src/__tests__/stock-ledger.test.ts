@@ -113,17 +113,31 @@ describe("duplicate posting detection", () => {
 
 const now = new Date("2026-08-09T10:00:00Z");
 
-const position = (over: Partial<PositionRow> = {}): PositionRow => ({
-  clinicId: "clinic-a", clinicName: "Clinic A",
-  itemId: "item-1", itemName: "Gloves",
-  quantity: 10, avgUnitCost: 5,
-  stockUpdatedAt: now,
-  movementCount: 1,
-  lastBalanceAfter: 10, lastAvgCostAfter: 5, lastMovementAt: now,
-  sumIn: 10, sumOut: 0,
-  firstNet: 10, firstBalanceAfter: 10,
-  ...over,
-});
+/**
+ * A healthy position. Batch quantity and ledger value default to whatever
+ * makes the row consistent, so a test only has to state the one thing it is
+ * breaking.
+ */
+const position = (over: Partial<PositionRow> = {}): PositionRow => {
+  const row = {
+    clinicId: "clinic-a", clinicName: "Clinic A",
+    itemId: "item-1", itemName: "Gloves",
+    quantity: 10, avgUnitCost: 5 as number | null,
+    stockUpdatedAt: now,
+    movementCount: 1,
+    lastBalanceAfter: 10 as number | null, lastAvgCostAfter: 5 as number | null,
+    lastMovementAt: now as Date | null,
+    sumIn: 10, sumOut: 0,
+    firstNet: 10 as number | null, firstBalanceAfter: 10 as number | null,
+    ...over,
+  };
+  return {
+    ...row,
+    batchQty:        over.batchQty        ?? row.quantity,
+    negativeBatches: over.negativeBatches ?? 0,
+    ledgerValue:     over.ledgerValue     ?? row.quantity * (row.avgUnitCost ?? 0),
+  };
+};
 
 const codes = (rows: PositionRow[]) => evaluatePositions(rows).map((f) => f.code);
 
@@ -187,6 +201,69 @@ describe("drift: ClinicStock vs ledger", () => {
 
   it("tolerates sub-cent rounding on cost", () => {
     expect(codes([position({ avgUnitCost: 5.001 })])).not.toContain("AVG_COST_MISMATCH");
+  });
+});
+
+describe("18-22. drift: batch quantities and value", () => {
+  it("18. says nothing about a position whose batches cover it exactly", () => {
+    expect(evaluatePositions([position({ quantity: 10, batchQty: 10 })])).toEqual([]);
+  });
+
+  it("19. catches batches claiming more stock than the position holds", () => {
+    const f = evaluatePositions([position({ quantity: 10, batchQty: 14 })]);
+    const over = f.find((x) => x.code === "BATCH_OVER_ALLOCATION")!;
+    expect(over.severity).toBe("ERROR");
+    expect(over.expected).toBe(10);
+    expect(over.actual).toBe(14);
+  });
+
+  it("19. catches a batch driven below zero", () => {
+    const f = evaluatePositions([position({ negativeBatches: 1 })]);
+    expect(f.find((x) => x.code === "BATCH_NEGATIVE")?.severity).toBe("ERROR");
+  });
+
+  it("21. treats stock with no batch behind it as informational, not an error", () => {
+    const f = evaluatePositions([position({ quantity: 10, batchQty: 4 })]);
+    const info = f.find((x) => x.code === "UNBATCHED_STOCK")!;
+    expect(info.severity).toBe("INFO");
+    expect(f.some((x) => x.severity === "ERROR")).toBe(false);
+  });
+
+  it("21. does not report unbatched stock twice for a pre-ledger position", () => {
+    const f = evaluatePositions([position({
+      quantity: 10, batchQty: 0, movementCount: 0, lastBalanceAfter: null,
+      lastAvgCostAfter: null, lastMovementAt: null, sumIn: 0, sumOut: 0,
+      firstNet: null, firstBalanceAfter: null,
+    })]);
+    expect(f.map((x) => x.code)).toEqual(["MISSING_MOVEMENTS"]);
+  });
+
+  it("20. catches a ledger value that does not reconcile to stock value", () => {
+    // A second revaluation of the same receipt: value posted, quantity not.
+    const f = evaluatePositions([position({ quantity: 10, avgUnitCost: 5, ledgerValue: 75 })]);
+    const v = f.find((x) => x.code === "VALUE_MISMATCH")!;
+    expect(v.severity).toBe("ERROR");
+    expect(v.expected).toBe(50);
+    expect(v.actual).toBe(75);
+  });
+
+  it("20. tolerates the Decimal(10,2) vs Decimal(12,4) rounding gap", () => {
+    // 10 units whose true average is 5.0049 — stored as 5.00, ledger as 50.05.
+    expect(codes([position({ quantity: 10, avgUnitCost: 5, ledgerValue: 50.05 })]))
+      .not.toContain("VALUE_MISMATCH");
+  });
+
+  it("20. skips the value check where the ledger never saw the opening value", () => {
+    // opening 4 units the ledger has no cost history for.
+    expect(codes([position({
+      quantity: 8, movementCount: 3, lastBalanceAfter: 8,
+      sumIn: 10, sumOut: 6, firstNet: 4, firstBalanceAfter: 8, ledgerValue: 12,
+    })])).not.toContain("VALUE_MISMATCH");
+  });
+
+  it("22. still reports a ledger quantity mismatch as an error", () => {
+    const f = evaluatePositions([position({ quantity: 13, batchQty: 13, ledgerValue: 65 })]);
+    expect(f.find((x) => x.code === "BALANCE_MISMATCH")?.severity).toBe("ERROR");
   });
 });
 

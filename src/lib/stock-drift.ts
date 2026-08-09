@@ -24,7 +24,11 @@ export type DriftCode =
   | "UNEXPLAINED_CHANGE"     // ClinicStock changed after the last ledger write
   | "AVG_COST_MISMATCH"      // costing drifted from the ledger
   | "INVALID_DIRECTION"      // qtyIn/qtyOut disagree with direction
-  | "DOUBLE_REVERSAL";       // a movement reversed more than once
+  | "DOUBLE_REVERSAL"        // a movement reversed more than once
+  | "BATCH_OVER_ALLOCATION"  // batches claim more stock than the position holds
+  | "BATCH_NEGATIVE"         // a batch has been driven below zero
+  | "UNBATCHED_STOCK"        // part of the position has no batch behind it
+  | "VALUE_MISMATCH";        // ledger value does not reconcile to stock value
 
 export interface DriftFinding {
   code: DriftCode;
@@ -55,6 +59,12 @@ export interface PositionRow {
   sumOut: number;
   firstNet: number | null;       // qtyIn - qtyOut of the earliest movement
   firstBalanceAfter: number | null;
+  /** Sum of StockBatch.remainingQty for this position. */
+  batchQty: number;
+  /** How many batch rows sit below zero (should always be none). */
+  negativeBatches: number;
+  /** Cumulative signed value the ledger has posted for this position. */
+  ledgerValue: number;
 }
 
 export interface LedgerAnomalyRows {
@@ -69,6 +79,24 @@ export interface LedgerAnomalyRows {
 const UNEXPLAINED_TOLERANCE_MS = 60_000;
 const COST_TOLERANCE = 0.005;
 
+/**
+ * Value tolerance.
+ *
+ * Two roundings stand between the ledger and ClinicStock and neither is a
+ * defect. ClinicStock.avgUnitCost is Decimal(10,2) while the ledger carries
+ * Decimal(12,4), so `quantity × avgUnitCost` can be out by up to half a cent
+ * per unit; and every posted valueDelta is itself rounded to the cent. The
+ * tolerance absorbs exactly those two and nothing more, so a real double
+ * posting or a bypassed mutation still shows up.
+ *
+ * Precision is deliberately not being changed here — the tolerance is the
+ * documented bridge until that decision is taken.
+ */
+const VALUE_FLOOR_TOLERANCE = 0.05;
+export function valueTolerance(quantity: number, movementCount: number): number {
+  return VALUE_FLOOR_TOLERANCE + Math.abs(quantity) * 0.005 + movementCount * 0.005;
+}
+
 export function evaluatePositions(rows: PositionRow[]): DriftFinding[] {
   const findings: DriftFinding[] = [];
 
@@ -78,6 +106,32 @@ export function evaluatePositions(rows: PositionRow[]): DriftFinding[] {
     if (r.quantity < 0) {
       findings.push({ ...where, code: "NEGATIVE_BALANCE", severity: "ERROR",
         detail: "ClinicStock quantity is negative", actual: r.quantity });
+    }
+
+    // ── Physical batches vs the operational balance ──────────────────────
+    //
+    // Batches account for part of a position, never more than all of it. The
+    // system predates batch tracking, so a position may legitimately hold
+    // stock no batch covers — that remainder is unbatched stock, reported for
+    // visibility, not as a fault. Batches claiming *more* than the position
+    // holds is real drift: it means a stock-out reduced ClinicStock without
+    // depleting the batch behind it.
+    if (r.negativeBatches > 0) {
+      findings.push({ ...where, code: "BATCH_NEGATIVE", severity: "ERROR",
+        detail: `${r.negativeBatches} batch record(s) have a negative remaining quantity`,
+        actual: r.negativeBatches });
+    }
+
+    if (r.batchQty > r.quantity) {
+      findings.push({ ...where, code: "BATCH_OVER_ALLOCATION", severity: "ERROR",
+        detail: "Batch quantities exceed stock on hand — a stock-out reduced the balance without depleting its batch",
+        expected: r.quantity, actual: r.batchQty });
+    } else if (r.batchQty < r.quantity && r.movementCount > 0) {
+      // Positions with no ledger history at all are already reported as
+      // MISSING_MOVEMENTS; do not report the same stock twice.
+      findings.push({ ...where, code: "UNBATCHED_STOCK", severity: "INFO",
+        detail: "Part of this position has no batch record behind it (pre-batch stock or a stock-take increase)",
+        expected: r.quantity, actual: r.batchQty });
     }
 
     if (r.movementCount === 0) {
@@ -115,6 +169,31 @@ export function evaluatePositions(rows: PositionRow[]): DriftFinding[] {
       findings.push({ ...where, code: "AVG_COST_MISMATCH", severity: "WARNING",
         detail: "Average cost differs from the latest ledger movement",
         expected: r.lastAvgCostAfter, actual: r.avgUnitCost });
+    }
+
+    // ── Value ────────────────────────────────────────────────────────────
+    //
+    // Under weighted average the ledger's cumulative value is the stock value:
+    // an issue removes quantity × average and leaves the average alone, a
+    // receipt adds quantity × cost and moves the average to match. So the sum
+    // of every valueDelta must equal quantity × avgUnitCost.
+    //
+    // Only checkable where the ledger covers the whole history. A position
+    // that already held stock when the ledger started has an opening value the
+    // ledger never saw, and Phase 1 deliberately posts no opening balances —
+    // so those are skipped rather than reported as false errors.
+    if (r.firstBalanceAfter !== null && r.firstNet !== null && r.avgUnitCost !== null) {
+      const opening = r.firstBalanceAfter - r.firstNet;
+      if (opening === 0) {
+        const stockValue = r.quantity * r.avgUnitCost;
+        const gap = Math.abs(r.ledgerValue - stockValue);
+        if (gap > valueTolerance(r.quantity, r.movementCount)) {
+          findings.push({ ...where, code: "VALUE_MISMATCH", severity: "ERROR",
+            detail: "Ledger value does not reconcile to stock on hand at the operational average cost",
+            expected: Math.round(stockValue * 100) / 100,
+            actual: Math.round(r.ledgerValue * 100) / 100 });
+        }
+      }
     }
 
     if (
@@ -179,7 +258,10 @@ export async function runDriftDetection(clinicIds: string[] | null = null): Prom
       m."lastBalanceAfter", m."lastAvgCostAfter", m."lastMovementAt",
       COALESCE(m."sumIn", 0)  AS "sumIn",
       COALESCE(m."sumOut", 0) AS "sumOut",
-      m."firstNet", m."firstBalanceAfter"
+      m."firstNet", m."firstBalanceAfter",
+      COALESCE(m."ledgerValue", 0)     AS "ledgerValue",
+      COALESCE(b."batchQty", 0)        AS "batchQty",
+      COALESCE(b."negativeBatches", 0) AS "negativeBatches"
     FROM "ClinicStock" cs
     JOIN "Clinic" c    ON c."id" = cs."clinicId"
     JOIN "StockItem" i ON i."id" = cs."itemId"
@@ -189,6 +271,7 @@ export async function runDriftDetection(clinicIds: string[] | null = null): Prom
         COUNT(*)::int                                              AS "movementCount",
         SUM("qtyIn")::int                                          AS "sumIn",
         SUM("qtyOut")::int                                         AS "sumOut",
+        SUM("valueDelta")                                          AS "ledgerValue",
         (ARRAY_AGG("balanceAfter" ORDER BY "seq" DESC))[1]         AS "lastBalanceAfter",
         (ARRAY_AGG("avgCostAfter" ORDER BY "seq" DESC))[1]         AS "lastAvgCostAfter",
         (ARRAY_AGG("createdAt" ORDER BY "seq" DESC))[1]            AS "lastMovementAt",
@@ -197,6 +280,14 @@ export async function runDriftDetection(clinicIds: string[] | null = null): Prom
       FROM "StockMovement"
       GROUP BY "clinicId", "itemId"
     ) m ON m."clinicId" = cs."clinicId" AND m."itemId" = cs."itemId"
+    LEFT JOIN (
+      SELECT
+        "clinicId", "itemId",
+        SUM(GREATEST("remainingQty", 0))::int                      AS "batchQty",
+        COUNT(*) FILTER (WHERE "remainingQty" < 0)::int            AS "negativeBatches"
+      FROM "StockBatch"
+      GROUP BY "clinicId", "itemId"
+    ) b ON b."clinicId" = cs."clinicId" AND b."itemId" = cs."itemId"
     ${clinicIds ? `WHERE cs."clinicId" = ANY($1)` : ""}
   `, ...(clinicIds ? [clinicIds] : []));
 
@@ -216,6 +307,9 @@ export async function runDriftDetection(clinicIds: string[] | null = null): Prom
     sumOut: Number(p.sumOut),
     firstNet: p.firstNet === null ? null : Number(p.firstNet),
     firstBalanceAfter: p.firstBalanceAfter === null ? null : Number(p.firstBalanceAfter),
+    batchQty: Number(p.batchQty),
+    negativeBatches: Number(p.negativeBatches),
+    ledgerValue: Number(p.ledgerValue),
   }));
 
   const [duplicateKeys, invalidDirection, negativeMovements, brokenRunningBalance, doubleReversals, movementCount] =

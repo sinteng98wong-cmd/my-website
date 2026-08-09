@@ -22,6 +22,10 @@ const CODE_HELP: Record<string, string> = {
   AVG_COST_MISMATCH:     "Costing drifted from the ledger.",
   INVALID_DIRECTION:     "Quantities disagree with the movement's direction.",
   DOUBLE_REVERSAL:       "A movement has been reversed more than once.",
+  BATCH_OVER_ALLOCATION: "Batches claim more stock than the position holds — a stock-out did not deplete its batch.",
+  BATCH_NEGATIVE:        "A batch has been driven below zero.",
+  UNBATCHED_STOCK:       "Part of this position has no batch behind it. Expected for stock predating batch tracking.",
+  VALUE_MISMATCH:        "Ledger value does not reconcile to stock on hand at the operational average cost.",
 };
 
 const fmtDuration = (ms: number) => (ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`);

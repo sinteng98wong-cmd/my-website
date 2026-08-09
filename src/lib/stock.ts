@@ -2,6 +2,13 @@ import { randomUUID } from "crypto";
 import { prisma } from "./prisma";
 import { DeliveryOrder, Prisma, StockMovementType } from "@prisma/client";
 import { postMovement, type LedgerSource } from "./stock-ledger";
+import {
+  allocateBatches,
+  allocationsReconcile,
+  pinnedBatchError,
+  unbatchedAvailable,
+  type Allocation,
+} from "./stock-batch";
 
 /**
  * Prisma client or an open interactive transaction. Callers that need the
@@ -56,15 +63,62 @@ export interface LineLedger {
   note?: string | null;
 }
 
-export type DeductLine = { itemId: string; quantity: number } & LineLedger;
+export type DeductLine = {
+  itemId: string;
+  quantity: number;
+  /**
+   * Pin the deduction to one physical batch. Nothing else may satisfy it —
+   * not another batch, not unbatched stock.
+   */
+  batchId?: string | null;
+} & LineLedger;
 
+export type DeductOptions = LedgerSource & {
+  type: StockMovementType;
+  /**
+   * May expired batches be depleted? True by default, because a deduction that
+   * has already passed the ClinicStock check must not then be blocked by the
+   * physical layer — expired stock is still transferred, counted short and
+   * written off. Stock issues that must not consume expired goods pass false.
+   */
+  allowExpiredBatches?: boolean;
+};
+
+/** What one deducted line actually took, physically and in the ledger. */
+export interface DeductOutcome {
+  itemId:       string;
+  postingKey:   string;
+  sourceLineId: string | null;
+  movementId:   string;
+  allocations:  Allocation[];
+}
+
+/** A deduction that ClinicStock allows but the physical batches cannot back. */
+export class BatchAllocationError extends Error {
+  constructor(message: string, readonly itemId: string) {
+    super(message);
+    this.name = "BatchAllocationError";
+  }
+}
+
+/**
+ * Take stock out.
+ *
+ * Three things happen under one row lock, so they cannot disagree: ClinicStock
+ * is decremented, the ledger movement is appended, and the physical batches
+ * behind the quantity are depleted. Every stock-out in the system goes through
+ * here — issues, transfers, transfer variances and stock-take shortfalls — so
+ * batch quantities can never drift above the balance they belong to.
+ */
 export async function deductStock(
   clinicId: string,
   lines: DeductLine[],
-  ledger: LedgerSource & { type: StockMovementType },
+  ledger: DeductOptions,
   tx?: StockClient
-): Promise<void> {
-  await inTransaction(tx, async (client) => {
+): Promise<DeductOutcome[]> {
+  return inTransaction(tx, async (client) => {
+    const outcomes: DeductOutcome[] = [];
+
     for (const line of lines) {
       if (line.quantity <= 0) continue;
 
@@ -88,11 +142,16 @@ export async function deductStock(
         data:  { quantity: { decrement: line.quantity } },
       });
 
-      await postMovement(client, {
+      const allocations = await depleteBatches(client, clinicId, line, current.quantity, ledger);
+
+      const movement = await postMovement(client, {
         ...ledger,
         type:         line.type ?? ledger.type,
         clinicId,
         itemId:       line.itemId,
+        // A single-batch deduction is traceable to its batch; a split one is
+        // recorded by its allocations instead of picking an arbitrary batch.
+        batchId:      allocations.length === 1 ? allocations[0].batchId : null,
         quantity:     line.quantity,
         unitCost:     avgCost,
         balanceAfter,
@@ -101,8 +160,81 @@ export async function deductStock(
         sourceLineId: line.sourceLineId ?? null,
         note:         line.note ?? ledger.note ?? null,
       });
+
+      outcomes.push({
+        itemId:       line.itemId,
+        postingKey:   line.postingKey,
+        sourceLineId: line.sourceLineId ?? null,
+        movementId:   movement.id,
+        allocations,
+      });
     }
+
+    return outcomes;
   });
+}
+
+/**
+ * Deplete the physical batches behind one deduction.
+ *
+ * Called with the ClinicStock row lock already held, so the batch view cannot
+ * be raced. `stockQty` is the pre-deduction balance, which is what makes the
+ * unbatched headroom correct.
+ */
+async function depleteBatches(
+  client: StockClient,
+  clinicId: string,
+  line: DeductLine,
+  stockQty: number,
+  ledger: DeductOptions
+): Promise<Allocation[]> {
+  const batches = await client.stockBatch.findMany({
+    where:   { clinicId, itemId: line.itemId, remainingQty: { gt: 0 } },
+    orderBy: [{ expiryDate: "asc" }, { receivedAt: "asc" }],
+    select:  { id: true, batchNumber: true, expiryDate: true, remainingQty: true },
+  });
+
+  const { allocations, shortfall, pinned } = allocateBatches(batches, line.quantity, {
+    unbatchedAvailable: unbatchedAvailable(stockQty, batches),
+    allowExpired:       ledger.allowExpiredBatches ?? true,
+    pinnedBatchId:      line.batchId ?? null,
+  });
+
+  if (shortfall > 0 || !allocationsReconcile(allocations, line.quantity)) {
+    const item = await client.stockItem.findUnique({ where: { id: line.itemId }, select: { name: true } });
+    throw new BatchAllocationError(
+      pinned
+        ? pinnedBatchError(pinned, line.quantity, item?.name)
+        : `Not enough batch stock to cover ${item?.name ?? line.itemId}: ` +
+          `${line.quantity - shortfall} allocatable, ${line.quantity} requested. ` +
+          `Check batch quantities and expiry dates.`,
+      line.itemId
+    );
+  }
+
+  for (const a of allocations) {
+    if (!a.batchId) continue;
+    // Conditional decrement: a batch can never be driven below zero, even if
+    // something slipped past the row lock.
+    const { count } = await client.stockBatch.updateMany({
+      where: { id: a.batchId, remainingQty: { gte: a.quantity } },
+      data:  { remainingQty: { decrement: a.quantity } },
+    });
+    if (count === 0)
+      throw new BatchAllocationError(
+        `Batch ${a.batchNumber ?? a.batchId} no longer has ${a.quantity} available.`,
+        line.itemId
+      );
+  }
+
+  return allocations;
+}
+
+/** One physical batch arriving as part of a receipt line. */
+export interface IncomingBatch {
+  batchNumber: string | null;
+  expiryDate:  Date | null;
+  quantity:    number;
 }
 
 export type ReceiveLine = {
@@ -113,6 +245,13 @@ export type ReceiveLine = {
   expiryDate?:  Date | null;
   supplierId?:  string | null;
   doLineId?:    string | null;
+  /**
+   * Batch identities arriving with this line, used by transfers to recreate at
+   * the destination exactly what was depleted at source. Entries with no batch
+   * number and no expiry represent unbatched source stock and create no batch
+   * record — identity is carried, never invented.
+   */
+  batches?:    IncomingBatch[];
 } & LineLedger;
 
 export async function receiveStock(
@@ -151,24 +290,37 @@ export async function receiveStock(
         },
       });
 
-      // Create batch record for traceability + expiry tracking
-      let batchId: string | null = null;
-      if (line.batchNumber || line.expiryDate) {
+      // Create batch records for traceability + expiry tracking. A carried
+      // allocation (transfer) can bring several batches in on one line; a
+      // plain receipt brings at most one.
+      const incoming: IncomingBatch[] = line.batches?.length
+        ? line.batches
+        : line.batchNumber || line.expiryDate
+          ? [{ batchNumber: line.batchNumber ?? null, expiryDate: line.expiryDate ?? null, quantity: line.receivedQty }]
+          : [];
+
+      const createdIds: string[] = [];
+      for (const b of incoming) {
+        if (b.quantity <= 0) continue;
+        // No identity to carry — this quantity was unbatched at source and
+        // stays unbatched here rather than gaining a fabricated batch.
+        if (!b.batchNumber && !b.expiryDate) continue;
         const batch = await client.stockBatch.create({
           data: {
             itemId:       line.itemId,
             clinicId,
             supplierId:   line.supplierId  ?? null,
-            batchNumber:  line.batchNumber ?? "N/A",
-            expiryDate:   line.expiryDate  ?? null,
-            quantity:     line.receivedQty,
-            remainingQty: line.receivedQty,
+            batchNumber:  b.batchNumber ?? "N/A",
+            expiryDate:   b.expiryDate  ?? null,
+            quantity:     b.quantity,
+            remainingQty: b.quantity,
             unitCost:     line.unitCost ?? 0,
             doLineId:     line.doLineId ?? null,
           },
         });
-        batchId = batch.id;
+        createdIds.push(batch.id);
       }
+      const batchId = createdIds.length === 1 ? createdIds[0] : null;
 
       await postMovement(client, {
         ...ledger,
