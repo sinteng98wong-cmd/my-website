@@ -109,6 +109,8 @@ const NAV: NavEntry[] = [
       { key: "inv-overview", label: "Overview",         href: "/inventory"            },
       { key: "stock",        label: "Stock Levels",     href: "/stock"                },
       { key: "batches",      label: "Batches & Expiry", href: "/inventory/batches"    },
+      { key: "stock-issues", label: "Stock Issues",     href: "/inventory/stock-issues" },
+      { key: "expiring",     label: "Expiring Stock",   href: "/inventory/expiring"    },
       { key: "stock-takes",  label: "Stock Takes",      href: "/inventory/stock-takes" },
       { key: "stock-drift",  label: "Ledger Drift",     href: "/inventory/stock-drift" },
     ],

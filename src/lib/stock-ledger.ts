@@ -35,6 +35,7 @@ const DIRECTIONS: Record<StockMovementType, StockDirection> = {
   CONSUMPTION_REVERSAL:  "IN",
   WRITE_OFF_EXPIRY:      "OUT",
   WRITE_OFF_DAMAGE:      "OUT",
+  WRITE_OFF_WASTAGE:     "OUT",
   REVALUATION:           "NONE",
 };
 
@@ -77,6 +78,7 @@ export const postingKeys = {
   revaluePo:   (invoiceRef: string, poLineId: string) => `REVAL:PO:${invoiceRef}:${poLineId}`,
   opening:     (clinicId: string, itemId: string) => `OPENING:${clinicId}:${itemId}`,
   stockTake:   (lineId: string) => `STOCKTAKE:${lineId}:ADJUSTMENT`,
+  stockIssue:  (lineId: string) => `ISSUE:${lineId}:OUT`,
 };
 
 // ── Posting ─────────────────────────────────────────────────────────────────
