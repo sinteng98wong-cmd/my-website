@@ -11,8 +11,9 @@ import { prisma } from "@/lib/prisma";
 import { INVENTORY_ROLES, assertClinicAccess } from "@/lib/clinic-access";
 import { checkTransition, requiresApproval } from "@/lib/stock-issue";
 import { postStockIssue } from "@/services/stock-issue.service";
+import { withPeriodLock } from "@/lib/stock-period-http";
 
-export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
+async function postHandler(_req: NextRequest, { params }: { params: { id: string } }) {
   const session = await getServerSession(authOptions);
   if (!session?.user) return NextResponse.json({ error: "Unauthenticated" }, { status: 401 });
   const role   = (session.user as any).role as string;
@@ -50,3 +51,6 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
   const { ok: _ok, ...posted } = result;
   return NextResponse.json({ ok: true, status: "POSTED", ...posted });
 }
+
+// A locked stock period surfaces as a 409 instead of an unhandled throw.
+export const POST = withPeriodLock(postHandler);

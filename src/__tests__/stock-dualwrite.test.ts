@@ -22,6 +22,10 @@ const stockRow = { quantity: 20, avgUnitCost: 5 };
 let batchSeq = 0;
 
 const prismaMock: any = {
+  // Period-lock gate: postMovement checks this on the caller's client.
+  // Unlocked by default here; the locked path is covered in stock-period tests.
+  $executeRawUnsafe: jest.fn(async () => 1),
+  stockPeriodLock: { findUnique: jest.fn(async () => null) },
   userClinic: { findMany: jest.fn(), findFirst: jest.fn() },
   clinicStock: { update: jest.fn(async () => ({})), findUnique: jest.fn(async () => stockRow) },
   stockBatch: {

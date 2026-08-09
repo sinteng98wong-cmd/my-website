@@ -7,6 +7,7 @@ import { postMovement, postingKeys } from "@/lib/stock-ledger";
 import {
   splitPriceCorrection, paidInvoicedQtyOf, PPV_NOTE, REVALUATION_NOTE,
 } from "@/lib/stock-ppv";
+import { isPeriodLockedError } from "@/lib/stock-period";
 import { z } from "zod";
 
 // ── Internal DO invoice ────────────────────────────────────────────────────
@@ -371,6 +372,13 @@ export async function POST(req: NextRequest) {
 
       return NextResponse.json(invoice, { status: 201 });
     } catch (e) {
+      // A locked stock period refuses the revaluation and the PPV together —
+      // the whole transaction rolls back, so the invoice is not created either.
+      if (isPeriodLockedError(e))
+        return NextResponse.json(
+          { error: e.message, clinicId: e.clinicId, period: e.period, code: "PERIOD_LOCKED" },
+          { status: 409 }
+        );
       const msg = e instanceof Error ? e.message : String(e);
       if (msg === "PO_ALREADY_INVOICED" || isUniqueViolation(e, "purchaseOrderId"))
         return NextResponse.json(

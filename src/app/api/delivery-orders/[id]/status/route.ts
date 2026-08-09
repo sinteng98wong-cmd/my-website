@@ -5,12 +5,13 @@ import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { deductStock, receiveStock } from "@/lib/stock";
 import { postingKeys } from "@/lib/stock-ledger";
+import { withPeriodLock } from "@/lib/stock-period-http";
 
 const Schema = z.object({
   status: z.enum(["PENDING", "APPROVED", "DRAFT", "IN_TRANSIT", "RECEIVED", "INVOICED"]),
 });
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+async function patchHandler(req: NextRequest, { params }: { params: { id: string } }) {
   const session = await getServerSession(authOptions);
   if (!session?.user) return NextResponse.json({ error: "Unauthenticated" }, { status: 401 });
   const role = (session.user as any).role as string;
@@ -203,3 +204,6 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   return NextResponse.json({ error: "Invalid transition" }, { status: 400 });
 }
+
+// A locked stock period surfaces as a 409 instead of an unhandled throw.
+export const PATCH = withPeriodLock(patchHandler);

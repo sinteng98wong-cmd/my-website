@@ -14,12 +14,13 @@ import {
 import { INVENTORY_ROLES, assertClinicAccess } from "@/lib/clinic-access";
 import { postingKeys } from "@/lib/stock-ledger";
 import { z } from "zod";
+import { withPeriodLock } from "@/lib/stock-period-http";
 
 const Schema = z.object({
   status: z.enum(["SUBMITTED", "CONFIRMED", "RECEIVED", "PARTIAL", "INVOICED", "CANCELLED"]),
 });
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+async function patchHandler(req: NextRequest, { params }: { params: { id: string } }) {
   const session = await getServerSession(authOptions);
   if (!session?.user) return NextResponse.json({ error: "Unauthenticated" }, { status: 401 });
   const role   = (session.user as any).role as string;
@@ -142,3 +143,6 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   });
   return NextResponse.json(updated);
 }
+
+// A locked stock period surfaces as a 409 instead of an unhandled throw.
+export const PATCH = withPeriodLock(patchHandler);

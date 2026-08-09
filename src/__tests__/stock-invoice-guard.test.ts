@@ -16,6 +16,10 @@ const movements: any[] = [];
 const stockWrites: any[] = [];
 
 const prismaMock: any = {
+  // Period-lock gate: postMovement checks this on the caller's client.
+  // Unlocked by default here; the locked path is covered in stock-period tests.
+  $executeRawUnsafe: jest.fn(async () => 1),
+  stockPeriodLock: { findUnique: jest.fn(async () => null) },
   userClinic:    { findMany: jest.fn(async () => [{ clinicId: A }]) },
   stockInvoice:  { findUnique: jest.fn(async () => null), create: jest.fn(async ({ data }: any) => ({ id: "inv-1", ...data })) },
   purchaseOrder: { findUnique: jest.fn(), updateMany: jest.fn(async () => ({ count: 1 })) },

@@ -7,6 +7,7 @@ import { receiveStock } from "@/lib/stock";
 import { checkPoolDirectReceive } from "@/lib/stock-receipt";
 import { postingKeys } from "@/lib/stock-ledger";
 import { getUserClinicIds, hasGlobalClinicScope } from "@/lib/clinic-access";
+import { withPeriodLock } from "@/lib/stock-period-http";
 
 const Schema = z.object({
   clinicId: z.string().min(1),
@@ -16,7 +17,7 @@ const Schema = z.object({
   })).min(1),
 });
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+async function postHandler(req: NextRequest, { params }: { params: { id: string } }) {
   const session = await getServerSession(authOptions);
   if (!session?.user) return NextResponse.json({ error: "Unauthenticated" }, { status: 401 });
   const role   = (session.user as any).role as string;
@@ -105,3 +106,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   return NextResponse.json({ participant: updatedParticipant, allReceived });
 }
+
+// A locked stock period surfaces as a 409 instead of an unhandled throw.
+export const POST = withPeriodLock(postHandler);

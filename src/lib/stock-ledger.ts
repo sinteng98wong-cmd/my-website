@@ -14,6 +14,7 @@
  * movement carrying `reversalOfId`.
  */
 import type { Prisma, StockDirection, StockMovementType, StockSourceType } from "@prisma/client";
+import { assertPeriodOpen } from "./stock-period";
 
 export type LedgerClient = Prisma.TransactionClient;
 
@@ -148,6 +149,13 @@ export async function postMovement(client: LedgerClient, input: PostMovementInpu
     ? round2(input.valueDelta)
     : valueDeltaFor(direction, qtyIn, qtyOut, unitCost);
   const movementAt = new Date();
+  const period = periodOf(movementAt);
+
+  // The single gate every posting path passes through. Runs on the caller's
+  // transaction client, so the check and the ClinicStock mutation commit
+  // together — a lock landing mid-transaction cannot slip a movement through.
+  await assertPeriodOpen(client, input.clinicId, period);
+
   const avgCostAfter = round4(input.avgCostAfter);
 
   return client.stockMovement.create({
@@ -173,7 +181,7 @@ export async function postMovement(client: LedgerClient, input: PostMovementInpu
       reversalOfId: input.reversalOfId ?? null,
       note:         input.note ?? null,
       movementAt,
-      period:       periodOf(movementAt),
+      period,
       createdById:  input.userId ?? null,
     },
   });

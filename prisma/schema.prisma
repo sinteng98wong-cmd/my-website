@@ -173,6 +173,8 @@ model Clinic {
   payrollConfig            ClinicPayrollConfig?
   payrollBankPayments      PayrollBankPayment[]
   attendanceMonthSubmissions AttendanceMonthSubmission[]
+  // Stock period locking
+  stockPeriodLocks         StockPeriodLock[]
 
   @@index([entityId])
 }
@@ -293,6 +295,8 @@ model User {
   createdStockIssues         StockIssue[]                @relation("StockIssueCreator")
   submittedStockIssues       StockIssue[]                @relation("StockIssueSubmitter")
   reviewedStockIssues        StockIssue[]                @relation("StockIssueReviewer")
+  lockedStockPeriods         StockPeriodLock[]           @relation("StockPeriodLockedBy")
+  unlockedStockPeriods       StockPeriodLock[]           @relation("StockPeriodUnlockedBy")
   createdAt            DateTime               @default(now())
 }
 
@@ -1090,6 +1094,11 @@ enum StockDirection {
   IN
   OUT
   NONE
+}
+
+enum StockPeriodStatus {
+  OPEN
+  LOCKED
 }
 
 enum DriftRunStatus {
@@ -3256,4 +3265,37 @@ model Shift {
   // migration (see migration.sql), plus the app-level conflict engine.
   @@index([userId, startTime])
   @@index([branchId, startTime])
+}
+
+// ── Stock Period Lock ─────────────────────────────────────────────────────
+// Closes a clinic's stock month. Deliberately separate from MonthlyRecon:
+// that model means "cash settlement reconciled", which closes on a different
+// cadence, on different evidence, under different authority. Sharing one row
+// would make locking cash force-close stock.
+//
+// The row is the audit record. Locking stamps who and when; unlocking keeps
+// the row, flips the status and records who, when and why.
+
+model StockPeriodLock {
+  id           String            @id @default(cuid())
+  clinicId     String
+  clinic       Clinic            @relation(fields: [clinicId], references: [id])
+  /// "YYYY-MM" in Malaysia time — see periodOf() in lib/stock-ledger.
+  period       String
+  status       StockPeriodStatus @default(LOCKED)
+  notes        String?
+  lockedById   String
+  lockedBy     User              @relation("StockPeriodLockedBy", fields: [lockedById], references: [id])
+  lockedAt     DateTime          @default(now())
+  unlockedById String?
+  unlockedBy   User?             @relation("StockPeriodUnlockedBy", fields: [unlockedById], references: [id])
+  unlockedAt   DateTime?
+  /// Mandatory when unlocking — a closed period is reopened only on record.
+  unlockReason String?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  @@unique([clinicId, period])
+  @@index([clinicId])
+  @@index([status])
 }
