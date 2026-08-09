@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { Resend } from "resend";
 import { prisma } from "@/lib/prisma";
 import { clinicManagerEmails } from "@/lib/leave-email";
@@ -7,8 +7,25 @@ import { getStaffingStatus } from "@/lib/staff-alert";
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 const fmt = (d: Date) => new Date(d).toLocaleDateString("en-MY", { dateStyle: "medium" });
 
+/**
+ * Accepts the `x-cron-secret` header used by this repo's other cron routes and
+ * the `Authorization: Bearer <CRON_SECRET>` header Vercel Cron sends. Fails
+ * closed when CRON_SECRET is unset, so an unconfigured deployment cannot leave
+ * the route open.
+ */
+function isAuthorized(req: NextRequest): boolean {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return false;
+  if (req.headers.get("x-cron-secret") === secret) return true;
+  return req.headers.get("authorization") === `Bearer ${secret}`;
+}
+
 /** Weekly Monday 08:00 digest to each clinic's managers. */
-export async function GET() {
+export async function GET(req: NextRequest) {
+  if (!isAuthorized(req)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const now = new Date();
   const weekStart = new Date(now); weekStart.setHours(0, 0, 0, 0);
   const weekEnd = new Date(weekStart); weekEnd.setDate(weekEnd.getDate() + 7);
