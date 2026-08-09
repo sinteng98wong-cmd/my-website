@@ -8,9 +8,24 @@
  */
 import { prisma } from "../src/lib/prisma";
 import { runDriftDetection } from "../src/lib/stock-drift";
+import { runAndRecordDrift } from "../src/lib/stock-drift-run";
 
 async function main() {
-  const clinicIds = process.argv.slice(2);
+  const args = process.argv.slice(2);
+
+  // --record runs group-wide through the same path the nightly job uses and
+  // leaves an audit record, so a manual check is visible alongside the schedule.
+  if (args.includes("--record")) {
+    const summary = await runAndRecordDrift({ trigger: "MANUAL" });
+    console.log(
+      `Recorded run ${summary.runId ?? "(not persisted)"} — ${summary.status} ` +
+      `(${summary.errorCount} errors, ${summary.warningCount} warnings, ${summary.infoCount} info, ${summary.durationMs}ms)`
+    );
+    if (!summary.clean) process.exitCode = 1;
+    return;
+  }
+
+  const clinicIds = args.filter((a) => !a.startsWith("--"));
   const report = await runDriftDetection(clinicIds.length ? clinicIds : null);
 
   console.log(`Stock ledger drift check — ${report.generatedAt}`);

@@ -23,19 +23,31 @@ const CODE_HELP: Record<string, string> = {
   DOUBLE_REVERSAL:       "A movement has been reversed more than once.",
 };
 
+const fmtDuration = (ms: number) => (ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`);
+
 export function StockDriftClient({ clinics }: { clinics: Clinic[] }) {
   const [clinicId, setClinicId] = useState("");
   const [report, setReport] = useState<any>(null);
+  const [runs, setRuns] = useState<any[]>([]);
+  const [scopedRuns, setScopedRuns] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true); setError("");
     try {
-      const res = await fetch(`/api/admin/stock-drift${clinicId ? `?clinicId=${clinicId}` : ""}`);
-      const d = await res.json();
-      if (!res.ok) throw new Error(d.error ?? "Failed to run drift detection");
+      const [reportRes, runsRes] = await Promise.all([
+        fetch(`/api/admin/stock-drift${clinicId ? `?clinicId=${clinicId}` : ""}`),
+        fetch("/api/admin/stock-drift/runs?limit=14"),
+      ]);
+      const d = await reportRes.json();
+      if (!reportRes.ok) throw new Error(d.error ?? "Failed to run drift detection");
       setReport(d);
+      if (runsRes.ok) {
+        const r = await runsRes.json();
+        setRuns(r.runs ?? []);
+        setScopedRuns(!!r.scoped);
+      }
     } catch (e: any) {
       setError(e.message);
       setReport(null);
@@ -45,6 +57,8 @@ export function StockDriftClient({ clinics }: { clinics: Clinic[] }) {
   }, [clinicId]);
 
   useEffect(() => { load(); }, [load]);
+
+  const lastRun = runs[0];
 
   const t = report?.totals;
 
@@ -71,6 +85,21 @@ export function StockDriftClient({ clinics }: { clinics: Clinic[] }) {
       </div>
 
       {error && <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-600">{error}</div>}
+
+      {lastRun && (lastRun.status === "FAILED" || lastRun.errorCount > 0) && (
+        <div className="p-4 rounded-lg border bg-red-50 border-red-200">
+          <p className="font-semibold text-red-800">
+            {lastRun.status === "FAILED"
+              ? "⚠ The last scheduled drift check did not complete"
+              : `⚠ The last scheduled drift check found ${lastRun.errorCount} error${lastRun.errorCount === 1 ? "" : "s"}`}
+          </p>
+          <p className="text-xs text-red-700 mt-1">
+            {new Date(lastRun.startedAt).toLocaleString("en-MY")}
+            {lastRun.errorMessage ? ` — ${lastRun.errorMessage}` : ""}
+            {lastRun.alertSentAt ? " · administrators notified" : ""}
+          </p>
+        </div>
+      )}
 
       {report && (
         <>
@@ -125,6 +154,50 @@ export function StockDriftClient({ clinics }: { clinics: Clinic[] }) {
                     <td className="px-4 py-3 text-slate-700">{f.detail}</td>
                     <td className="px-4 py-3 font-mono text-xs text-slate-500">{f.expected ?? "—"}</td>
                     <td className="px-4 py-3 font-mono text-xs text-slate-800">{f.actual ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="card overflow-x-auto">
+            <div className="px-4 pt-4">
+              <p className="text-sm font-semibold">Scheduled run history</p>
+              <p className="text-xs text-slate-500 mt-0.5">
+                The nightly check records every run. Informational findings — stock predating the
+                ledger — are counted but never fail a run.
+                {scopedRuns && " Findings are limited to your clinics."}
+              </p>
+            </div>
+            <table className="w-full text-sm mt-3">
+              <thead className="table-header">
+                <tr>{["Run", "Trigger", "Outcome", "Errors", "Warnings", "Info", "Duration", "Alerted"].map((h) => (
+                  <th key={h} className="px-4 py-3 text-left text-xs text-slate-500 uppercase">{h}</th>
+                ))}</tr>
+              </thead>
+              <tbody>
+                {runs.length === 0 && (
+                  <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400">
+                    No scheduled runs recorded yet. The check runs nightly.
+                  </td></tr>
+                )}
+                {runs.map((r) => (
+                  <tr key={r.id} className="table-row">
+                    <td className="px-4 py-3">{new Date(r.startedAt).toLocaleString("en-MY")}</td>
+                    <td className="px-4 py-3 text-slate-500 text-xs">{r.trigger}</td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs px-2 py-0.5 rounded ${
+                        r.status === "FAILED" ? "bg-red-100 text-red-700"
+                        : r.errorCount > 0 ? "bg-red-100 text-red-700"
+                        : "bg-green-100 text-green-700"}`}>
+                        {r.status === "FAILED" ? "FAILED" : r.errorCount > 0 ? "DRIFT" : "CLEAN"}
+                      </span>
+                    </td>
+                    <td className={`px-4 py-3 font-medium ${r.errorCount ? "text-red-700" : "text-slate-500"}`}>{r.errorCount}</td>
+                    <td className="px-4 py-3 text-slate-600">{r.warningCount}</td>
+                    <td className="px-4 py-3 text-slate-400">{r.infoCount ?? "—"}</td>
+                    <td className="px-4 py-3 text-slate-500 text-xs">{fmtDuration(r.durationMs)}</td>
+                    <td className="px-4 py-3 text-xs text-slate-500">{r.alertSentAt ? "Yes" : "—"}</td>
                   </tr>
                 ))}
               </tbody>

@@ -1074,6 +1074,41 @@ enum StockDirection {
   NONE
 }
 
+enum DriftRunStatus {
+  SUCCESS
+  FAILED
+}
+
+enum DriftRunTrigger {
+  CRON
+  MANUAL
+}
+
+/// Audit record of each stock-ledger drift detection run. Monitoring metadata
+/// for Phase 1 dual-write — not part of the ledger itself.
+model StockDriftRun {
+  id           String          @id @default(cuid())
+  trigger      DriftRunTrigger @default(CRON)
+  status       DriftRunStatus
+  startedAt    DateTime
+  finishedAt   DateTime
+  durationMs   Int
+  positions    Int             @default(0)
+  movements    Int             @default(0)
+  errorCount   Int             @default(0)
+  warningCount Int             @default(0)
+  /// Pre-ledger MISSING_MOVEMENTS rows land here. Never treated as a failure.
+  infoCount    Int             @default(0)
+  clean        Boolean         @default(false)
+  /// Errors and warnings only, bounded. Informational rows are counted, not stored.
+  findings     Json            @default("[]")
+  errorMessage String?
+  alertSentAt  DateTime?
+  createdAt    DateTime        @default(now())
+  @@index([startedAt])
+  @@index([status])
+}
+
 enum StockSourceType {
   PURCHASE_ORDER
   DELIVERY_ORDER
