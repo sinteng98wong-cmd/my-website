@@ -136,6 +136,7 @@ model Clinic {
   payoutSchemes        PayoutScheme[]
   payoutScanRates      PayoutScanRate[]
   stockMovements       StockMovement[]
+  stockTakes           StockTake[]
 
   // Branch contact info
   address    String?
@@ -284,6 +285,10 @@ model User {
   rejectedBankPayments       PayrollBankPayment[]        @relation("BankPaymentRejecter")
   submittedAttendanceMonths  AttendanceMonthSubmission[] @relation("AttendanceMonthSubmitter")
   stockMovements             StockMovement[]             @relation("StockMovementCreator")
+  createdStockTakes          StockTake[]                 @relation("StockTakeCreator")
+  submittedStockTakes        StockTake[]                 @relation("StockTakeSubmitter")
+  reviewedStockTakes         StockTake[]                 @relation("StockTakeReviewer")
+  countedStockTakeLines      StockTakeLine[]             @relation("StockTakeCounter")
   createdAt            DateTime               @default(now())
 }
 
@@ -1000,6 +1005,7 @@ model StockItem {
   batches        StockBatch[]
   poLines        POLine[]
   movements      StockMovement[]
+  stockTakeLines StockTakeLine[]
 }
 
 model ClinicStock {
@@ -1176,6 +1182,88 @@ model StockMovement {
   @@index([sourceType, sourceId])
   @@index([type])
   @@index([reversalOfId])
+}
+
+// ── Stock Take & Adjustment ───────────────────────────────────────────────
+// Operational physical counting. A count records the system quantity at the
+// time it is raised, staff enter what they physically find, and only PIC
+// approval turns the variance into adjustment movements in the ledger.
+//
+// Nothing here writes ClinicStock directly — approval goes through the same
+// atomic mutation path every other stock movement uses.
+
+enum StockTakeStatus {
+  DRAFT
+  SUBMITTED
+  RECOUNT_REQUIRED   // stock moved since the count; must be re-counted
+  APPROVED
+  REJECTED
+}
+
+enum StockAdjustmentReason {
+  STOCK_COUNT_VARIANCE
+  DAMAGED
+  EXPIRED
+  WASTAGE
+  FOUND_STOCK
+  DATA_CORRECTION
+  OTHER
+}
+
+model StockTake {
+  id            String          @id @default(cuid())
+  reference     String          @unique          // STK-202608-001
+  clinicId      String
+  clinic        Clinic          @relation(fields: [clinicId], references: [id])
+  status        StockTakeStatus @default(DRAFT)
+  notes         String?
+
+  createdById   String
+  createdBy     User            @relation("StockTakeCreator", fields: [createdById], references: [id])
+  createdAt     DateTime        @default(now())
+  submittedById String?
+  submittedBy   User?           @relation("StockTakeSubmitter", fields: [submittedById], references: [id])
+  submittedAt   DateTime?
+  reviewedById  String?
+  reviewedBy    User?           @relation("StockTakeReviewer", fields: [reviewedById], references: [id])
+  reviewedAt    DateTime?
+  reviewNote    String?
+  postedAt      DateTime?
+
+  totalVarianceQty   Int        @default(0)
+  totalVarianceValue Decimal    @default(0) @db.Decimal(14,2)
+
+  lines         StockTakeLine[]
+  updatedAt     DateTime        @updatedAt
+  @@index([clinicId, status])
+  @@index([createdAt])
+}
+
+model StockTakeLine {
+  id           String                 @id @default(cuid())
+  stockTakeId  String
+  stockTake    StockTake              @relation(fields: [stockTakeId], references: [id])
+  itemId       String
+  item         StockItem              @relation(fields: [itemId], references: [id])
+
+  /// System quantity when the count was raised, refreshed on a recount.
+  systemQty    Int
+  physicalQty  Int?
+  /// Average cost snapshot, for the estimated variance value before posting.
+  avgUnitCost  Decimal                @db.Decimal(12,4)
+  reason       StockAdjustmentReason?
+  note         String?
+  countedById  String?
+  countedBy    User?                  @relation("StockTakeCounter", fields: [countedById], references: [id])
+  countedAt    DateTime?
+
+  /// Frozen at approval — what was actually posted.
+  postedVarianceQty Int?
+  postedUnitCost    Decimal?          @db.Decimal(12,4)
+  movementId        String?
+
+  @@unique([stockTakeId, itemId])
+  @@index([stockTakeId])
 }
 
 // Tracks payments made to a supplier (against their stock invoices)

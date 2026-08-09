@@ -76,6 +76,7 @@ export const postingKeys = {
   revalueDo:   (invoiceRef: string, doLineId: string) => `REVAL:DO:${invoiceRef}:${doLineId}`,
   revaluePo:   (invoiceRef: string, poLineId: string) => `REVAL:PO:${invoiceRef}:${poLineId}`,
   opening:     (clinicId: string, itemId: string) => `OPENING:${clinicId}:${itemId}`,
+  stockTake:   (lineId: string) => `STOCKTAKE:${lineId}:ADJUSTMENT`,
 };
 
 // ── Posting ─────────────────────────────────────────────────────────────────
