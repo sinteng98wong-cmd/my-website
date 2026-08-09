@@ -182,12 +182,20 @@ drift check (`/api/cron/stock-drift`, 18:00 UTC = 02:00 Malaysia time).
 1. **`CRON_SECRET` must be set as a Vercel environment variable.** Every cron
    route rejects an unauthenticated call with 401. If the variable is unset,
    the schedule fires but every run is refused and nothing is recorded.
-2. **The Vercel plan must include Cron Jobs.** Hobby projects are limited to
-   daily invocations and a small number of jobs; check the plan covers the
-   seven jobs in `vercel.json`.
+   Vercel also only *sends* its `Authorization: Bearer` header when this
+   variable exists, so without it the job cannot authenticate by any route.
+2. **The plan must allow seven cron jobs.** `vercel.json` declares seven.
+   Vercel Hobby permits **2 cron jobs, once per day**; Pro permits 40 at any
+   frequency. On Hobby the extra jobs are silently not registered — the
+   deployment succeeds and the job simply never fires. **Verify the count in
+   the Vercel dashboard under Settings → Cron Jobs after deploying: all seven
+   must be listed, including `/api/cron/stock-drift`.**
 3. **`RESEND_API_KEY` must be set** for drift alerts to reach administrators.
    Without it the check still runs and records its result, but nobody is
    emailed — the failure is only visible on the Ledger Drift page.
+4. **Timeout.** `/api/cron/stock-drift` sets `maxDuration = 60`. A platform
+   default of 10-15s would abort the scan as the ledger grows, and an aborted
+   run writes no record — a silent miss.
 
 ### Header convention — check this before relying on the schedule
 
@@ -199,6 +207,28 @@ currently being invoked by Vercel Cron, they are being rejected.
 `/api/cron/stock-drift` accepts **both** headers, so it works either way. If
 the other jobs are silently failing, they need the same treatment — check the
 Vercel deployment logs for 401s on the cron paths.
+
+**Unrelated finding, not fixed here:** `/api/cron/leave-digest` checks no
+secret at all. It is publicly callable and sends email to clinic managers on
+each call. It is outside the stock work, so it was left alone deliberately —
+but it should be given the same guard as the other five.
+
+### Confirming the first nightly run
+
+The Ledger Drift page (**Inventory → Ledger Drift**) warns when the schedule
+has never run, or has not run for more than 36 hours. A green "Ledger
+reconciles" result on that page is an *on-demand* check and says nothing about
+whether the schedule is working — the amber banner is the signal to watch.
+
+To confirm without waiting for the night:
+
+```bash
+curl -i -H "x-cron-secret: $CRON_SECRET" https://<your-app>/api/cron/stock-drift
+```
+
+A 200 with `{"status":"SUCCESS", ...}` means it works end to end. A 401 means
+`CRON_SECRET` does not match. After the first real firing, the run appears in
+the page's "Scheduled run history" with trigger `CRON`.
 
 ### Running the check without a scheduler
 

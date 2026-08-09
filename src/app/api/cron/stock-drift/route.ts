@@ -16,6 +16,14 @@ import { Resend } from "resend";
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
+/**
+ * The detector scans every stock position and the whole movement history. The
+ * platform default (10-15s) would abort that as the ledger grows, and a
+ * timeout writes no StockDriftRun row — a silent miss. 60s is within both the
+ * Hobby and Pro ceilings.
+ */
+export const maxDuration = 60;
+
 function isAuthorized(req: NextRequest): boolean {
   const secret = process.env.CRON_SECRET;
   if (!secret) return false;

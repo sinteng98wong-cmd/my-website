@@ -1,5 +1,7 @@
 import {
   MAX_STORED_FINDINGS,
+  SCHEDULE_MAX_AGE_HOURS,
+  assessSchedule,
   classifyRun,
   describeRun,
   runAndRecordDrift,
@@ -184,6 +186,43 @@ describe("run descriptions", () => {
     expect(describeRun(summarise(report({ infos: 26 }), t0, t1))).toContain("reconciles");
     expect(describeRun(summarise(report({ errors: 2 }), t0, t1))).toContain("2 error");
     expect(describeRun(summarise(null, t0, t1, "boom"))).toContain("FAILED");
+  });
+});
+
+describe("schedule health", () => {
+  const now = new Date("2026-08-10T09:00:00Z");
+  const hoursAgo = (h: number) => new Date(now.getTime() - h * 3_600_000);
+
+  it("flags a schedule that has never run", () => {
+    expect(assessSchedule(null, now)).toEqual({ state: "NEVER_RUN", hoursSince: null });
+    expect(assessSchedule(undefined, now).state).toBe("NEVER_RUN");
+  });
+
+  it("accepts a run from last night", () => {
+    expect(assessSchedule(hoursAgo(11), now).state).toBe("OK");
+  });
+
+  it("tolerates one missed night before complaining", () => {
+    expect(assessSchedule(hoursAgo(SCHEDULE_MAX_AGE_HOURS - 1), now).state).toBe("OK");
+  });
+
+  it("flags a schedule that has stopped firing", () => {
+    const s = assessSchedule(hoursAgo(50), now);
+    expect(s.state).toBe("STALE");
+    expect(Math.round(s.hoursSince!)).toBe(50);
+  });
+
+  it("accepts an ISO string as well as a Date", () => {
+    expect(assessSchedule(hoursAgo(2).toISOString(), now).state).toBe("OK");
+  });
+
+  it("treats an unparseable timestamp as never having run", () => {
+    expect(assessSchedule("not-a-date", now).state).toBe("NEVER_RUN");
+  });
+
+  it("does not read a silent non-execution as success", () => {
+    // The whole point: no runs must never look like a healthy schedule.
+    expect(assessSchedule(null, now).state).not.toBe("OK");
   });
 });
 

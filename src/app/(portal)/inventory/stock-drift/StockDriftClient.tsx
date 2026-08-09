@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { assessSchedule } from "@/lib/stock-drift-run";
 
 type Clinic = { id: string; name: string };
 
@@ -59,6 +60,9 @@ export function StockDriftClient({ clinics }: { clinics: Clinic[] }) {
   useEffect(() => { load(); }, [load]);
 
   const lastRun = runs[0];
+  // Health of the schedule itself — a check that never fires must not read as
+  // success just because it has found no problems.
+  const schedule = assessSchedule(lastRun?.startedAt ?? null);
 
   const t = report?.totals;
 
@@ -85,6 +89,22 @@ export function StockDriftClient({ clinics }: { clinics: Clinic[] }) {
       </div>
 
       {error && <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-600">{error}</div>}
+
+      {!loading && schedule.state !== "OK" && (
+        <div className="p-4 rounded-lg border bg-amber-50 border-amber-200">
+          <p className="font-semibold text-amber-900">
+            {schedule.state === "NEVER_RUN"
+              ? "⚠ The nightly drift check has never run"
+              : `⚠ The nightly drift check has not run for ${Math.floor(schedule.hoursSince ?? 0)} hours`}
+          </p>
+          <p className="text-xs text-amber-800 mt-1">
+            Phase 1 is not being monitored. Check that <code>CRON_SECRET</code> is set, that the
+            deployment plan allows the scheduled job, and that <code>/api/cron/stock-drift</code>
+            is not returning 401 in the deployment logs. The result below is an on-demand check
+            only — it does not mean the schedule is working.
+          </p>
+        </div>
+      )}
 
       {lastRun && (lastRun.status === "FAILED" || lastRun.errorCount > 0) && (
         <div className="p-4 rounded-lg border bg-red-50 border-red-200">

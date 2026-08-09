@@ -158,6 +158,30 @@ export function scopeFindings(findings: DriftFinding[], clinicIds: string[] | nu
   return findings.filter((f) => f.clinicId !== undefined && clinicIds.includes(f.clinicId));
 }
 
+/**
+ * Health of the schedule itself, independent of what any run found.
+ *
+ * A nightly check that silently never fires is the most likely production
+ * failure — an unset CRON_SECRET, a plan cron limit, a renamed path — and
+ * without this it presents as success, because a ledger with no runs looks
+ * exactly like a ledger with no problems.
+ */
+export type ScheduleState = "OK" | "STALE" | "NEVER_RUN";
+
+export const SCHEDULE_MAX_AGE_HOURS = 36; // nightly, plus a day's grace
+
+export function assessSchedule(
+  lastRunAt: Date | string | null | undefined,
+  now: Date = new Date(),
+  maxAgeHours: number = SCHEDULE_MAX_AGE_HOURS
+): { state: ScheduleState; hoursSince: number | null } {
+  if (!lastRunAt) return { state: "NEVER_RUN", hoursSince: null };
+  const last = lastRunAt instanceof Date ? lastRunAt : new Date(lastRunAt);
+  if (Number.isNaN(last.getTime())) return { state: "NEVER_RUN", hoursSince: null };
+  const hoursSince = (now.getTime() - last.getTime()) / 3_600_000;
+  return { state: hoursSince > maxAgeHours ? "STALE" : "OK", hoursSince };
+}
+
 /** One-line summary for logs and alert subjects. */
 export function describeRun(summary: DriftRunSummary): string {
   if (summary.status === "FAILED") return `Stock drift check FAILED: ${summary.errorMessage}`;
