@@ -178,6 +178,10 @@ export function evaluatePositions(rows: PositionRow[]): DriftFinding[] {
     // receipt adds quantity × cost and moves the average to match. So the sum
     // of every valueDelta must equal quantity × avgUnitCost.
     //
+    // PURCHASE_PRICE_VARIANCE is the one exception and is filtered out of
+    // ledgerValue above: it records value that never entered — or has already
+    // left — inventory, so it is not part of this reconciliation.
+    //
     // Only checkable where the ledger covers the whole history. A position
     // that already held stock when the ledger started has an opening value the
     // ledger never saw, and Phase 1 deliberately posts no opening balances —
@@ -271,7 +275,12 @@ export async function runDriftDetection(clinicIds: string[] | null = null): Prom
         COUNT(*)::int                                              AS "movementCount",
         SUM("qtyIn")::int                                          AS "sumIn",
         SUM("qtyOut")::int                                         AS "sumOut",
-        SUM("valueDelta")                                          AS "ledgerValue",
+        -- Purchase price variance is excluded by design. It is the half of a
+        -- supplier invoice correction relating to stock that has already left
+        -- inventory, so it never lands in ClinicStock value; including it here
+        -- would report a VALUE_MISMATCH on every repriced position.
+        SUM("valueDelta") FILTER (WHERE "type" <> 'PURCHASE_PRICE_VARIANCE')
+                                                                   AS "ledgerValue",
         (ARRAY_AGG("balanceAfter" ORDER BY "seq" DESC))[1]         AS "lastBalanceAfter",
         (ARRAY_AGG("avgCostAfter" ORDER BY "seq" DESC))[1]         AS "lastAvgCostAfter",
         (ARRAY_AGG("createdAt" ORDER BY "seq" DESC))[1]            AS "lastMovementAt",

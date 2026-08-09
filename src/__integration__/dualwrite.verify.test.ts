@@ -354,7 +354,7 @@ describe("6. Pool receipt", () => {
 describe("7. Invoice revaluation", () => {
   const invoiceRef = `${TAG}-INV1`;
 
-  it("posts a zero-quantity REVALUATION carrying the value change", async () => {
+  it("splits the price correction between inventory and purchase price variance (H-5)", async () => {
     session.user = { id: ids.user, role: "FINANCE" };
 
     const po = await prisma.purchaseOrder.findFirstOrThrow({
@@ -377,18 +377,44 @@ describe("7. Invoice revaluation", () => {
     // Quantity untouched — this is a value-only movement.
     expect(await qty(ids.clinicA, ids.itemA)).toBe(qtyBefore);
 
+    // 10 units were received at RM5 and invoiced at RM6, a RM10 correction.
+    // Only `qtyBefore` of those units are still on hand, so H-5 allocates the
+    // correction proportionally: the held units carry their share as an
+    // inventory revaluation and the rest becomes purchase price variance.
+    // Loading the whole RM10 onto the remaining units — the behaviour before
+    // H-5 — would overstate them by RM10/qtyBefore each.
     const mv = await moves(ids.clinicA, ids.itemA);
-    expect(mv).toHaveLength(before + 1);
-    const reval = mv[mv.length - 1];
+    expect(mv).toHaveLength(before + 2);
+
+    const reval = mv.find((m: any) => m.type === "REVALUATION" && m.reference === invoiceRef)!;
+    const ppv   = mv.find((m: any) => m.type === "PURCHASE_PRICE_VARIANCE" && m.reference === invoiceRef)!;
+    expect(reval).toBeDefined();
+    expect(ppv).toBeDefined();
+
     expect(reval).toMatchObject({
       type: "REVALUATION", direction: "NONE", qtyIn: 0, qtyOut: 0,
       sourceType: "STOCK_INVOICE", sourceId: po.id, sourceLineId: line.id,
       reference: invoiceRef, postingKey: `REVAL:PO:${invoiceRef}:${line.id}`,
       balanceAfter: qtyBefore, createdById: ids.user,
     });
-    // +RM1 on 10 units = +RM10 spread over the 4 units still on hand
-    expect(Number(reval.valueDelta)).toBe(10);
-    expect(Number(reval.avgCostAfter)).toBeCloseTo(avgBefore + 10 / qtyBefore, 3);
+    expect(ppv).toMatchObject({
+      type: "PURCHASE_PRICE_VARIANCE", direction: "NONE", qtyIn: 0, qtyOut: 0,
+      sourceType: "STOCK_INVOICE", sourceId: po.id, sourceLineId: line.id,
+      reference: invoiceRef, postingKey: `PPV:PO:${invoiceRef}:${line.id}`,
+      balanceAfter: qtyBefore, createdById: ids.user,
+    });
+
+    // The invariant: nothing is lost between the two halves.
+    const inventoryShare = Number(reval.valueDelta);
+    const ppvShare       = Number(ppv.valueDelta);
+    expect(inventoryShare + ppvShare).toBeCloseTo(10, 2);
+
+    // 10 received into the pool, qtyBefore still held → that proportion.
+    expect(inventoryShare).toBeCloseTo(10 * (qtyBefore / 10), 2);
+
+    // The average moves by the inventory share only — RM1 per held unit, not
+    // the RM10/qtyBefore the pre-H-5 behaviour produced.
+    expect(Number(reval.avgCostAfter)).toBeCloseTo(avgBefore + inventoryShare / qtyBefore, 3);
     expect(await avg(ids.clinicA, ids.itemA)).toBeCloseTo(Number(reval.avgCostAfter), 3);
   });
 
