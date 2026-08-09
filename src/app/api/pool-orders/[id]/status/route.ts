@@ -75,17 +75,22 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const updateData: any = { status: "DELIVERED", deliveredAt: new Date() };
+    // Claim the transition alongside the stock movement so a double submit
+    // cannot receive the pool into the initiating clinic twice.
+    const updated = await prisma.$transaction(async (tx) => {
+      const claimed = await tx.poolOrder.updateMany({
+        where: { id: params.id, status: "SUBMITTED" },
+        data:  { status: "DELIVERED", deliveredAt: new Date() },
+      });
+      if (claimed.count === 0) return null;
 
-    if (pool.deliveryMode === "CENTRALISED") {
-      const stockLines = pool.lines.map((l) => ({ itemId: l.itemId, totalQty: l.totalQty }));
-      await receivePoolStock(pool.initiatingClinicId, stockLines);
-    }
-
-    const updated = await prisma.poolOrder.update({
-      where: { id: params.id },
-      data: updateData,
+      if (pool.deliveryMode === "CENTRALISED") {
+        const stockLines = pool.lines.map((l) => ({ itemId: l.itemId, totalQty: l.totalQty }));
+        await receivePoolStock(pool.initiatingClinicId, stockLines, tx);
+      }
+      return tx.poolOrder.findUnique({ where: { id: params.id } });
     });
+    if (!updated) return NextResponse.json({ error: "Pool order is no longer awaiting delivery" }, { status: 409 });
     return NextResponse.json(updated);
   }
 

@@ -3,6 +3,14 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { receiveStock } from "@/lib/stock";
+import {
+  checkPoTransition,
+  checkReceiptDeltas,
+  derivePoStatus,
+  isNoOpReceipt,
+  isReceiptStatus,
+  receiptDelta,
+} from "@/lib/stock-receipt";
 import { z } from "zod";
 
 const Schema = z.object({
@@ -27,41 +35,77 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const parsed = Schema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid status" }, { status: 422 });
 
-  const { status: newStatus } = parsed.data;
+  const { status: requested } = parsed.data;
 
-  // SUBMITTED → CONFIRMED
-  if (newStatus === "CONFIRMED") {
-    const updated = await prisma.purchaseOrder.update({
-      where: { id: params.id },
-      data:  { status: "CONFIRMED", confirmedAt: new Date() },
+  const transition = checkPoTransition(po.status, requested);
+  if (!transition.ok) return NextResponse.json({ error: transition.error }, { status: transition.status });
+
+  // ── Receipt (PARTIAL / RECEIVED) — posts stock ────────────────────────────
+  if (isReceiptStatus(requested)) {
+    const deltas = checkReceiptDeltas(po.lines);
+    if (!deltas.ok) return NextResponse.json({ error: deltas.error }, { status: deltas.status });
+
+    // Nothing new to post — report the derived status instead of double-posting.
+    if (isNoOpReceipt(po.lines)) {
+      const derived = derivePoStatus(po.lines);
+      const updated = po.status === derived
+        ? po
+        : await prisma.purchaseOrder.update({ where: { id: po.id }, data: { status: derived } });
+      return NextResponse.json({ ...updated, posted: 0, alreadyReceived: true });
+    }
+
+    const toPost = po.lines
+      .map((l) => ({ line: l, delta: receiptDelta(l) }))
+      .filter((x) => x.delta > 0);
+
+    // Stock movement, posted baseline and status all commit together.
+    const updated = await prisma.$transaction(async (tx) => {
+      await receiveStock(
+        po.clinicId,
+        toPost.map(({ line, delta }) => ({
+          itemId:      line.itemId,
+          receivedQty: delta,
+          unitCost:    Number(line.unitCost),
+          batchNumber: line.batchNumber ?? null,
+          expiryDate:  line.expiryDate  ?? null,
+          doLineId:    null,
+        })),
+        tx
+      );
+
+      for (const { line, delta } of toPost) {
+        await tx.pOLine.update({
+          where: { id: line.id },
+          data:  { postedQty: line.postedQty + delta },
+        });
+      }
+
+      // Derived from the lines, never taken from the client: a PO is RECEIVED
+      // only when every line has been posted in full.
+      const posted = po.lines.map((l) => ({
+        quantity:  l.quantity,
+        postedQty: l.postedQty + (toPost.find((x) => x.line.id === l.id)?.delta ?? 0),
+      }));
+
+      return tx.purchaseOrder.update({
+        where: { id: po.id },
+        data:  { status: derivePoStatus(posted), receivedAt: new Date() },
+      });
     });
-    return NextResponse.json(updated);
+
+    return NextResponse.json({
+      ...updated,
+      posted: toPost.reduce((s, x) => s + x.delta, 0),
+    });
   }
 
-  // * → RECEIVED / PARTIAL — commit stock
-  if (newStatus === "RECEIVED" || newStatus === "PARTIAL") {
-    await receiveStock(
-      po.clinicId,
-      po.lines.map((l) => ({
-        itemId:      l.itemId,
-        receivedQty: l.receivedQty ?? l.quantity,
-        unitCost:    Number(l.unitCost),
-        batchNumber: l.batchNumber ?? null,
-        expiryDate:  l.expiryDate  ?? null,
-        doLineId:    null,
-      }))
-    );
-    const updated = await prisma.purchaseOrder.update({
-      where: { id: params.id },
-      data:  { status: newStatus, receivedAt: new Date() },
-    });
-    return NextResponse.json(updated);
-  }
-
-  // Any valid transition
+  // ── Non-receipt transitions ───────────────────────────────────────────────
   const updated = await prisma.purchaseOrder.update({
     where: { id: params.id },
-    data:  { status: newStatus },
+    data: {
+      status: requested,
+      ...(requested === "CONFIRMED" ? { confirmedAt: new Date() } : {}),
+    },
   });
   return NextResponse.json(updated);
 }

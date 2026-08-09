@@ -79,11 +79,18 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (!["SUPER_ADMIN", "CLINIC_MANAGER", "STOREKEEPER"].includes(role) || !isFromClinicUser) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
-    await deductStock(order.fromClinicId, order.lines.map((l) => ({ itemId: l.itemId, quantity: l.quantity })));
-    const updated = await prisma.deliveryOrder.update({
-      where: { id: params.id },
-      data: { status: "IN_TRANSIT", dispatchedAt: new Date() },
+    // Claim the transition inside the same transaction as the stock movement,
+    // so a double submit cannot deduct the goods twice.
+    const updated = await prisma.$transaction(async (tx) => {
+      const claimed = await tx.deliveryOrder.updateMany({
+        where: { id: params.id, status: "APPROVED" },
+        data:  { status: "IN_TRANSIT", dispatchedAt: new Date() },
+      });
+      if (claimed.count === 0) return null;
+      await deductStock(order.fromClinicId, order.lines.map((l) => ({ itemId: l.itemId, quantity: l.quantity })), tx);
+      return tx.deliveryOrder.findUnique({ where: { id: params.id } });
     });
+    if (!updated) return NextResponse.json({ error: "Delivery order is no longer awaiting dispatch" }, { status: 409 });
     return NextResponse.json(updated);
   }
 
@@ -101,15 +108,21 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       expiryDate:  l.expiryDate  ?? null,
       doLineId:    l.id,
     }));
-    await receiveStock(order.toClinicId, receiveLines);
-
     const hasDiscrepancy = order.lines.some(
       (l) => l.receivedQty !== null && l.receivedQty !== l.quantity
     );
-    const updated = await prisma.deliveryOrder.update({
-      where: { id: params.id },
-      data: { status: "RECEIVED", receivedAt: new Date() },
+
+    // Same one-shot claim as dispatch: the receipt posts stock exactly once.
+    const updated = await prisma.$transaction(async (tx) => {
+      const claimed = await tx.deliveryOrder.updateMany({
+        where: { id: params.id, status: "IN_TRANSIT" },
+        data:  { status: "RECEIVED", receivedAt: new Date() },
+      });
+      if (claimed.count === 0) return null;
+      await receiveStock(order.toClinicId, receiveLines, tx);
+      return tx.deliveryOrder.findUnique({ where: { id: params.id } });
     });
+    if (!updated) return NextResponse.json({ error: "Delivery order is no longer in transit" }, { status: 409 });
     return NextResponse.json({ ...updated, hasDiscrepancy });
   }
 

@@ -1263,6 +1263,10 @@ model POLine {
   item        StockItem     @relation(fields: [itemId], references: [id])
   quantity    Int
   receivedQty Int?
+  /// Quantity already posted into ClinicStock. Receipts post only the
+  /// difference against this baseline, so re-running a receipt is a no-op and
+  /// receiving the remainder after a PARTIAL never re-posts earlier goods.
+  postedQty   Int           @default(0)
   unitCost    Decimal       @db.Decimal(10,2)
   batchNumber String?
   expiryDate  DateTime?
