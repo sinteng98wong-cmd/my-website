@@ -25,7 +25,13 @@ const prismaMock: any = {
     findUnique: jest.fn(async () => ({ quantity: 10, avgUnitCost: 5 })),
     update:     jest.fn(async (args: any) => { stockWrites.push(args); return {}; }),
   },
-  stockMovement: { create: jest.fn(async ({ data }: any) => { movements.push(data); return { id: `mv-${movements.length}`, ...data }; }) },
+  stockMovement: {
+    create: jest.fn(async ({ data }: any) => { movements.push(data); return { id: `mv-${movements.length}`, ...data }; }),
+    // Paid receipt pool for the H-5 correction split. Everything received is
+    // still on hand in this fixture, so the whole correction stays in inventory
+    // and the C-1 assertions below are unaffected.
+    aggregate: jest.fn(async () => ({ _sum: { qtyIn: 10 } })),
+  },
   deliveryOrder: { findMany: jest.fn(async () => []) },
   $transaction:  jest.fn(async (fn: any) => (typeof fn === "function" ? fn(prismaMock) : [])),
 };
@@ -58,6 +64,7 @@ beforeEach(() => {
   prismaMock.stockInvoice.create.mockImplementation(async ({ data }: any) => ({ id: "inv-1", ...data }));
   prismaMock.purchaseOrder.updateMany.mockResolvedValue({ count: 1 });
   prismaMock.clinicStock.findUnique.mockResolvedValue({ quantity: 10, avgUnitCost: 5 });
+  prismaMock.stockMovement.aggregate.mockResolvedValue({ _sum: { qtyIn: 10 } });
   prismaMock.$transaction.mockImplementation(async (fn: any) => (typeof fn === "function" ? fn(prismaMock) : []));
 });
 

@@ -1081,6 +1081,9 @@ enum StockMovementType {
   WRITE_OFF_DAMAGE
   WRITE_OFF_WASTAGE       // spoiled or unusable without being damaged or expired
   REVALUATION             // value-only movement, zero quantity
+  /// Supplier invoice price correction for stock that has already left
+  /// inventory. Value-only, zero quantity — see lib/stock-ppv.
+  PURCHASE_PRICE_VARIANCE
 }
 
 enum StockDirection {

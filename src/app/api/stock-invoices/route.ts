@@ -4,6 +4,9 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { clinicScopeFor } from "@/lib/clinic-access";
 import { postMovement, postingKeys } from "@/lib/stock-ledger";
+import {
+  splitPriceCorrection, paidInvoicedQtyOf, PPV_NOTE, REVALUATION_NOTE,
+} from "@/lib/stock-ppv";
 import { z } from "zod";
 
 // ── Internal DO invoice ────────────────────────────────────────────────────
@@ -272,31 +275,78 @@ export async function POST(req: NextRequest) {
           const invoicedCost = priceMap.get(line.id) ?? Number(line.unitCost);
           await tx.pOLine.update({ where: { id: line.id }, data: { unitCost: invoicedCost } });
 
-          // Correct avgUnitCost at the receiving clinic
+          // ── H-5: split the price correction ───────────────────────────────
+          // The difference is shared between stock still on hand and stock that
+          // has already left inventory. Nothing is dropped: when no stock
+          // remains the whole correction becomes purchase price variance.
           const originalCost = Number(line.unitCost);
           const costDiff = invoicedCost - originalCost;
           if (Math.abs(costDiff) <= 0.001) continue;
 
+          // Free goods were never invoiced, so they stay out of the base.
+          const paidInvoicedQty = paidInvoicedQtyOf(line);
+          if (paidInvoicedQty <= 0) continue;
+
           const cs = await tx.clinicStock.findUnique({
             where: { clinicId_itemId: { clinicId: po.clinicId, itemId: line.itemId } },
           });
-          if (!cs || cs.quantity <= 0) continue;
+          const currentQty = cs?.quantity ?? 0;
 
-          const qty = line.receivedQty ?? line.quantity;
-          const correction = costDiff * qty;
-          const newAvg = Math.max(0, (Number(cs.avgUnitCost ?? invoicedCost) * cs.quantity + correction) / cs.quantity);
-          await tx.clinicStock.update({
-            where: { clinicId_itemId: { clinicId: po.clinicId, itemId: line.itemId } },
-            data:  { avgUnitCost: newAvg },
+          // Denominator is the paid receipt pool for this clinic+item, so two
+          // purchase orders for the same item cannot both claim the same stock.
+          // RECEIPT_FOC is excluded by type — free goods carry no invoice price.
+          const pool = await tx.stockMovement.aggregate({
+            where: { clinicId: po.clinicId, itemId: line.itemId, type: "RECEIPT_PO" },
+            _sum:  { qtyIn: true },
           });
-          await postMovement(tx, {
-            clinicId: po.clinicId, itemId: line.itemId, type: "REVALUATION",
-            quantity: 0, unitCost: invoicedCost, valueDelta: correction,
-            balanceAfter: cs.quantity, avgCostAfter: newAvg,
-            sourceType: "STOCK_INVOICE", sourceId: purchaseOrderId, sourceLineId: line.id,
-            reference: invoiceRef, postingKey: postingKeys.revaluePo(invoiceRef, line.id),
-            userId, note: `Repriced from ${originalCost} to ${invoicedCost}`,
+
+          const split = splitPriceCorrection({
+            receiptUnitCost: originalCost,
+            invoiceUnitCost: invoicedCost,
+            paidInvoicedQty,
+            currentQty,
+            paidPoolQty: pool._sum.qtyIn ?? 0,
           });
+
+          const ratioPct = (split.onHandRatio * 100).toFixed(1);
+          const priced   = `Repriced from ${originalCost} to ${invoicedCost}`;
+
+          // A. Inventory revaluation — only meaningful while stock is held.
+          //
+          // No floor is applied to the new average. It cannot go negative:
+          // newAvg reduces to avg + costDiff × (paidInvoicedQty / paidPoolQty),
+          // and that factor is at most 1, so newAvg >= invoicedCost >= 0.
+          let avgAfter = Number(cs?.avgUnitCost ?? invoicedCost);
+          if (cs && currentQty > 0 && split.inventoryCorrection !== 0) {
+            avgAfter = (Number(cs.avgUnitCost ?? invoicedCost) * currentQty + split.inventoryCorrection) / currentQty;
+            await tx.clinicStock.update({
+              where: { clinicId_itemId: { clinicId: po.clinicId, itemId: line.itemId } },
+              data:  { avgUnitCost: avgAfter },
+            });
+            await postMovement(tx, {
+              clinicId: po.clinicId, itemId: line.itemId, type: "REVALUATION",
+              quantity: 0, unitCost: invoicedCost, valueDelta: split.inventoryCorrection,
+              balanceAfter: currentQty, avgCostAfter: avgAfter,
+              sourceType: "STOCK_INVOICE", sourceId: purchaseOrderId, sourceLineId: line.id,
+              reference: invoiceRef, postingKey: postingKeys.revaluePo(invoiceRef, line.id),
+              userId,
+              note: `${priced}. ${REVALUATION_NOTE} — ${ratioPct}% of ${split.totalCorrection.toFixed(2)}`,
+            });
+          }
+
+          // B. Purchase price variance — the portion no longer in inventory.
+          // Value-only and quantity-free: it never touches ClinicStock.
+          if (split.ppvCorrection !== 0) {
+            await postMovement(tx, {
+              clinicId: po.clinicId, itemId: line.itemId, type: "PURCHASE_PRICE_VARIANCE",
+              quantity: 0, unitCost: invoicedCost, valueDelta: split.ppvCorrection,
+              balanceAfter: currentQty, avgCostAfter: avgAfter,
+              sourceType: "STOCK_INVOICE", sourceId: purchaseOrderId, sourceLineId: line.id,
+              reference: invoiceRef, postingKey: postingKeys.ppvPo(invoiceRef, line.id),
+              userId,
+              note: `${priced}. ${PPV_NOTE} — ${(100 - Number(ratioPct)).toFixed(1)}% of ${split.totalCorrection.toFixed(2)}`,
+            });
+          }
         }
 
         return tx.stockInvoice.create({

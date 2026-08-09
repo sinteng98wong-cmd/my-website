@@ -36,7 +36,8 @@ const DIRECTIONS: Record<StockMovementType, StockDirection> = {
   WRITE_OFF_EXPIRY:      "OUT",
   WRITE_OFF_DAMAGE:      "OUT",
   WRITE_OFF_WASTAGE:     "OUT",
-  REVALUATION:           "NONE",
+  REVALUATION:             "NONE",
+  PURCHASE_PRICE_VARIANCE: "NONE",
 };
 
 export function directionFor(type: StockMovementType): StockDirection {
@@ -76,6 +77,9 @@ export const postingKeys = {
   poolDirect:  (participantId: string, itemId: string) => `POOLD:${participantId}:${itemId}:RECEIPT`,
   revalueDo:   (invoiceRef: string, doLineId: string) => `REVAL:DO:${invoiceRef}:${doLineId}`,
   revaluePo:   (invoiceRef: string, poLineId: string) => `REVAL:PO:${invoiceRef}:${poLineId}`,
+  /** Purchase price variance — deliberately distinct from the REVALUATION key
+   *  for the same line, so both halves of one correction can be posted. */
+  ppvPo:       (invoiceRef: string, poLineId: string) => `PPV:PO:${invoiceRef}:${poLineId}`,
   opening:     (clinicId: string, itemId: string) => `OPENING:${clinicId}:${itemId}`,
   stockTake:   (lineId: string) => `STOCKTAKE:${lineId}:ADJUSTMENT`,
   stockIssue:  (lineId: string) => `ISSUE:${lineId}:OUT`,
