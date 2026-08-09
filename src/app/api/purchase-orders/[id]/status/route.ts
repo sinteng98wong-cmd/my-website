@@ -12,6 +12,7 @@ import {
   receiptDelta,
 } from "@/lib/stock-receipt";
 import { INVENTORY_ROLES, assertClinicAccess } from "@/lib/clinic-access";
+import { postingKeys } from "@/lib/stock-ledger";
 import { z } from "zod";
 
 const Schema = z.object({
@@ -64,18 +65,44 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       .map((l) => ({ line: l, delta: receiptDelta(l) }))
       .filter((x) => x.delta > 0);
 
+    // Each line's delta is split into the paid portion and any free goods
+    // beyond the ordered quantity, so FOC enters stock at zero cost and the
+    // ledger matches the supplier invoice line for line.
+    const receiveLines = toPost.flatMap(({ line, delta }) => {
+      const target = (line.receivedQty ?? line.quantity);
+      const paidDelta = Math.max(0, Math.min(target, line.quantity) - Math.min(line.postedQty, line.quantity));
+      const focDelta  = Math.max(0, target - Math.max(line.postedQty, line.quantity));
+      const common = {
+        itemId:      line.itemId,
+        batchNumber: line.batchNumber ?? null,
+        expiryDate:  line.expiryDate  ?? null,
+        doLineId:    null,
+        sourceLineId: line.id,
+      };
+      return [
+        ...(paidDelta > 0 ? [{
+          ...common, receivedQty: paidDelta, unitCost: Number(line.unitCost),
+          postingKey: postingKeys.poReceipt(line.id, line.postedQty),
+          type: "RECEIPT_PO" as const,
+        }] : []),
+        ...(focDelta > 0 ? [{
+          ...common, receivedQty: focDelta, unitCost: 0,
+          postingKey: postingKeys.poFoc(line.id, line.postedQty),
+          type: "RECEIPT_FOC" as const,
+          note: `Free goods: ${focDelta} beyond the ordered ${line.quantity}`,
+        }] : []),
+      ];
+    });
+
     // Stock movement, posted baseline and status all commit together.
     const updated = await prisma.$transaction(async (tx) => {
       await receiveStock(
         po.clinicId,
-        toPost.map(({ line, delta }) => ({
-          itemId:      line.itemId,
-          receivedQty: delta,
-          unitCost:    Number(line.unitCost),
-          batchNumber: line.batchNumber ?? null,
-          expiryDate:  line.expiryDate  ?? null,
-          doLineId:    null,
-        })),
+        receiveLines,
+        {
+          type: "RECEIPT_PO", sourceType: "PURCHASE_ORDER", sourceId: po.id,
+          reference: po.poRef, userId,
+        },
         tx
       );
 

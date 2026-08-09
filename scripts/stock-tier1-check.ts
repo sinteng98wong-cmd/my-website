@@ -11,6 +11,7 @@
 import { prisma } from "../src/lib/prisma";
 import { deductStock, receiveStock } from "../src/lib/stock";
 import { derivePoStatus, receiptDelta } from "../src/lib/stock-receipt";
+import { postingKeys } from "../src/lib/stock-ledger";
 
 const S = `t1-${Date.now()}-`;
 let failures = 0;
@@ -31,7 +32,11 @@ async function postReceipt(poId: string) {
   const updated = await prisma.$transaction(async (tx) => {
     await receiveStock(
       po.clinicId,
-      toPost.map(({ line, delta }) => ({ itemId: line.itemId, receivedQty: delta, unitCost: Number(line.unitCost) })),
+      toPost.map(({ line, delta }) => ({
+        itemId: line.itemId, receivedQty: delta, unitCost: Number(line.unitCost),
+        postingKey: postingKeys.poReceipt(line.id, line.postedQty), sourceLineId: line.id,
+      })),
+      { type: "RECEIPT_PO", sourceType: "PURCHASE_ORDER", sourceId: po.id, reference: po.poRef },
       tx
     );
     for (const { line, delta } of toPost) {
@@ -108,7 +113,12 @@ async function main() {
         data:  { receivedAt: new Date() },
       });
       if (claimed.count === 0) return false;
-      await receiveStock(clinic.id, [{ itemId: item.id, receivedQty: 4, unitCost: 5 }], tx);
+      await receiveStock(
+        clinic.id,
+        [{ itemId: item.id, receivedQty: 4, unitCost: 5, postingKey: `POOLD:${participantId}:${item.id}:${Date.now()}:${Math.random()}` }],
+        { type: "RECEIPT_POOL", sourceType: "POOL_ORDER", sourceId: pool.id, reference: pool.poRef },
+        tx
+      );
       return true;
     });
 
@@ -122,11 +132,17 @@ async function main() {
 
   // ── concurrent deduct cannot go negative ──────────────────────────────────
   const scarce = await prisma.stockItem.create({ data: { sku: `${S}sku3`, name: `${S}scarce`, category: "Test" } });
-  await receiveStock(clinic.id, [{ itemId: scarce.id, receivedQty: 10, unitCost: 1 }]);
+  await receiveStock(
+    clinic.id,
+    [{ itemId: scarce.id, receivedQty: 10, unitCost: 1, postingKey: `SEED:${scarce.id}` }],
+    { type: "ADJUSTMENT_IN", sourceType: "STOCK_ADJUSTMENT", reference: "seed" }
+  );
 
   const results = await Promise.allSettled([
-    deductStock(clinic.id, [{ itemId: scarce.id, quantity: 8 }]),
-    deductStock(clinic.id, [{ itemId: scarce.id, quantity: 8 }]),
+    deductStock(clinic.id, [{ itemId: scarce.id, quantity: 8, postingKey: `DED:${scarce.id}:a` }],
+      { type: "ADJUSTMENT_OUT", sourceType: "STOCK_ADJUSTMENT", reference: "concurrency-a" }),
+    deductStock(clinic.id, [{ itemId: scarce.id, quantity: 8, postingKey: `DED:${scarce.id}:b` }],
+      { type: "ADJUSTMENT_OUT", sourceType: "STOCK_ADJUSTMENT", reference: "concurrency-b" }),
   ]);
   const fulfilled = results.filter((r) => r.status === "fulfilled").length;
   const finalQty = await qtyAt(clinic.id, scarce.id);
@@ -136,7 +152,11 @@ async function main() {
   // ── concurrent receipts do not lose quantity ──────────────────────────────
   const hot = await prisma.stockItem.create({ data: { sku: `${S}sku4`, name: `${S}hot`, category: "Test" } });
   await Promise.all(
-    Array.from({ length: 8 }, () => receiveStock(clinic.id, [{ itemId: hot.id, receivedQty: 5, unitCost: 3 }]))
+    Array.from({ length: 8 }, (_, i) => receiveStock(
+      clinic.id,
+      [{ itemId: hot.id, receivedQty: 5, unitCost: 3, postingKey: `HOT:${hot.id}:${i}` }],
+      { type: "ADJUSTMENT_IN", sourceType: "STOCK_ADJUSTMENT", reference: `concurrent-${i}` }
+    ))
   );
   const hotQty = await qtyAt(clinic.id, hot.id);
   const hotCost = (await prisma.clinicStock.findUnique({
@@ -145,7 +165,12 @@ async function main() {
   ok("eight concurrent receipts all land", hotQty === 40, `stock=${hotQty}`);
   ok("average cost survives concurrent receipts", Number(hotCost) === 3, `avgUnitCost=${hotCost}`);
 
-  // Cleanup
+  // Cleanup — the ledger is immutable, so teardown opts into maintenance mode.
+  await prisma.$executeRawUnsafe(`SET LOCAL "dentalos.ledger_maintenance" = 'on'`);
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe(`SET LOCAL "dentalos.ledger_maintenance" = 'on'`);
+    await tx.stockMovement.deleteMany({ where: { clinicId: clinic.id } });
+  });
   await prisma.stockBatch.deleteMany({ where: { clinicId: clinic.id } });
   await prisma.pOLine.deleteMany({ where: { po: { clinicId: clinic.id } } });
   await prisma.purchaseOrder.deleteMany({ where: { clinicId: clinic.id } });

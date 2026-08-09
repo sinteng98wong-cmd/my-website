@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { prisma } from "./prisma";
-import { DeliveryOrder, Prisma } from "@prisma/client";
+import { DeliveryOrder, Prisma, StockMovementType } from "@prisma/client";
+import { postMovement, type LedgerSource } from "./stock-ledger";
 
 /**
  * Prisma client or an open interactive transaction. Callers that need the
@@ -46,47 +47,78 @@ async function lockStockRow(
   return { quantity: row?.quantity ?? 0, avgUnitCost: row?.avgUnitCost != null ? Number(row.avgUnitCost) : null };
 }
 
+/** Per-line ledger metadata every mutation must supply. */
+export interface LineLedger {
+  postingKey: string;
+  /** Overrides the batch's default type (e.g. RECEIPT_FOC on a PO line). */
+  type?: StockMovementType;
+  sourceLineId?: string | null;
+  note?: string | null;
+}
+
+export type DeductLine = { itemId: string; quantity: number } & LineLedger;
+
 export async function deductStock(
   clinicId: string,
-  lines: { itemId: string; quantity: number }[],
+  lines: DeductLine[],
+  ledger: LedgerSource & { type: StockMovementType },
   tx?: StockClient
 ): Promise<void> {
   await inTransaction(tx, async (client) => {
     for (const line of lines) {
       if (line.quantity <= 0) continue;
 
-      // Conditional decrement: the row is only touched when it still holds
-      // enough stock, so two concurrent dispatches cannot both succeed and
-      // drive the balance negative.
-      const { count } = await client.clinicStock.updateMany({
-        where: { clinicId, itemId: line.itemId, quantity: { gte: line.quantity } },
+      // Lock first, then check and decrement. Holding the row lock makes the
+      // check-then-write safe, and gives the ledger the exact post-balance.
+      const current = await lockStockRow(client, clinicId, line.itemId);
+
+      if (current.quantity < line.quantity) {
+        const item = await client.stockItem.findUnique({ where: { id: line.itemId }, select: { name: true } });
+        throw new Error(
+          `Insufficient stock for ${item?.name ?? line.itemId}: available ${current.quantity}, requested ${line.quantity}`
+        );
+      }
+
+      const balanceAfter = current.quantity - line.quantity;
+      // Issues are valued at the weighted average in force at the time.
+      const avgCost = current.avgUnitCost ?? 0;
+
+      await client.clinicStock.update({
+        where: { clinicId_itemId: { clinicId, itemId: line.itemId } },
         data:  { quantity: { decrement: line.quantity } },
       });
 
-      if (count === 0) {
-        const [stock, item] = await Promise.all([
-          client.clinicStock.findUnique({ where: { clinicId_itemId: { clinicId, itemId: line.itemId } } }),
-          client.stockItem.findUnique({ where: { id: line.itemId }, select: { name: true } }),
-        ]);
-        throw new Error(
-          `Insufficient stock for ${item?.name ?? line.itemId}: available ${stock?.quantity ?? 0}, requested ${line.quantity}`
-        );
-      }
+      await postMovement(client, {
+        ...ledger,
+        type:         line.type ?? ledger.type,
+        clinicId,
+        itemId:       line.itemId,
+        quantity:     line.quantity,
+        unitCost:     avgCost,
+        balanceAfter,
+        avgCostAfter: avgCost,
+        postingKey:   line.postingKey,
+        sourceLineId: line.sourceLineId ?? null,
+        note:         line.note ?? ledger.note ?? null,
+      });
     }
   });
 }
 
+export type ReceiveLine = {
+  itemId:      string;
+  receivedQty: number;
+  unitCost?:   number;
+  batchNumber?: string | null;
+  expiryDate?:  Date | null;
+  supplierId?:  string | null;
+  doLineId?:    string | null;
+} & LineLedger;
+
 export async function receiveStock(
   clinicId: string,
-  lines: {
-    itemId:      string;
-    receivedQty: number;
-    unitCost?:   number;
-    batchNumber?: string | null;
-    expiryDate?:  Date | null;
-    supplierId?:  string | null;
-    doLineId?:    string | null;
-  }[],
+  lines: ReceiveLine[],
+  ledger: LedgerSource & { type: StockMovementType },
   tx?: StockClient
 ): Promise<void> {
   await inTransaction(tx, async (client) => {
@@ -97,9 +129,13 @@ export async function receiveStock(
       // its new average against a quantity this one is about to change.
       const current = await lockStockRow(client, clinicId, line.itemId);
 
-      // Weighted-average cost update (formula unchanged)
+      // Weighted-average cost update (formula unchanged).
+      //
+      // A cost of zero is meaningful — free goods dilute the average — so the
+      // test is "was a cost supplied", not "is the cost positive". Omitting
+      // unitCost entirely still leaves the average alone.
       let newAvgCost: number | undefined;
-      if (line.unitCost !== undefined && line.unitCost > 0) {
+      if (line.unitCost !== undefined && line.unitCost >= 0) {
         const curQty  = current.quantity;
         const curCost = current.avgUnitCost ?? line.unitCost;
         newAvgCost = curQty > 0
@@ -116,8 +152,9 @@ export async function receiveStock(
       });
 
       // Create batch record for traceability + expiry tracking
+      let batchId: string | null = null;
       if (line.batchNumber || line.expiryDate) {
-        await client.stockBatch.create({
+        const batch = await client.stockBatch.create({
           data: {
             itemId:       line.itemId,
             clinicId,
@@ -130,26 +167,51 @@ export async function receiveStock(
             doLineId:     line.doLineId ?? null,
           },
         });
+        batchId = batch.id;
       }
+
+      await postMovement(client, {
+        ...ledger,
+        type:         line.type ?? ledger.type,
+        clinicId,
+        itemId:       line.itemId,
+        batchId,
+        quantity:     line.receivedQty,
+        unitCost:     line.unitCost ?? 0,
+        balanceAfter: current.quantity + line.receivedQty,
+        avgCostAfter: newAvgCost ?? current.avgUnitCost ?? line.unitCost ?? 0,
+        postingKey:   line.postingKey,
+        sourceLineId: line.sourceLineId ?? null,
+        note:         line.note ?? ledger.note ?? null,
+      });
     }
   });
 }
 
+export type PoolReceiveLine = { itemId: string; totalQty: number; unitCost?: number } & LineLedger;
+
 export async function receivePoolStock(
   clinicId: string,
-  lines: { itemId: string; totalQty: number }[],
+  lines: PoolReceiveLine[],
+  ledger: LedgerSource & { type: StockMovementType },
   tx?: StockClient
 ): Promise<void> {
-  await inTransaction(tx, async (client) => {
-    for (const line of lines) {
-      if (line.totalQty <= 0) continue;
-      await lockStockRow(client, clinicId, line.itemId);
-      await client.clinicStock.update({
-        where: { clinicId_itemId: { clinicId, itemId: line.itemId } },
-        data:  { quantity: { increment: line.totalQty } },
-      });
-    }
-  });
+  // Pool receipts now carry cost like any other receipt, so pooled goods stop
+  // entering stock at zero value.
+  await receiveStock(
+    clinicId,
+    lines.map((l) => ({
+      itemId:      l.itemId,
+      receivedQty: l.totalQty,
+      unitCost:    l.unitCost,
+      postingKey:  l.postingKey,
+      type:        l.type,
+      sourceLineId: l.sourceLineId,
+      note:        l.note,
+    })),
+    ledger,
+    tx
+  );
 }
 
 export async function generateDOsFromPoolOrder(

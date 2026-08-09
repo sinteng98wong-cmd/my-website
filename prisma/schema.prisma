@@ -135,6 +135,7 @@ model Clinic {
   locumPayoutLines     LocumPayoutLine[]
   payoutSchemes        PayoutScheme[]
   payoutScanRates      PayoutScanRate[]
+  stockMovements       StockMovement[]
 
   // Branch contact info
   address    String?
@@ -282,6 +283,7 @@ model User {
   approvedBankPayments       PayrollBankPayment[]        @relation("BankPaymentApprover")
   rejectedBankPayments       PayrollBankPayment[]        @relation("BankPaymentRejecter")
   submittedAttendanceMonths  AttendanceMonthSubmission[] @relation("AttendanceMonthSubmitter")
+  stockMovements             StockMovement[]             @relation("StockMovementCreator")
   createdAt            DateTime               @default(now())
 }
 
@@ -997,6 +999,7 @@ model StockItem {
   participantLines PoolParticipantLine[]
   batches        StockBatch[]
   poLines        POLine[]
+  movements      StockMovement[]
 }
 
 model ClinicStock {
@@ -1029,9 +1032,115 @@ model StockBatch {
   unitCost    Decimal   @db.Decimal(10,2)
   doLineId    String?   // traceability back to the DO line
   receivedAt  DateTime  @default(now())
+  movements   StockMovement[]
   @@index([clinicId, itemId])
   @@index([expiryDate])
   @@index([clinicId, expiryDate])
+}
+
+// ── Stock Ledger ──────────────────────────────────────────────────────────
+// The authoritative, immutable history of every stock movement.
+//
+// Phase 1 (Tier 3A): written alongside ClinicStock, which remains the
+// operational balance. The ledger is not yet the reporting source of truth.
+//
+// Immutability is enforced by database trigger, not only by convention:
+// historical rows can never be updated, and corrections must be posted as a
+// new compensating movement linked through reversalOfId.
+
+enum StockMovementType {
+  OPENING_BALANCE
+  RECEIPT_PO
+  RECEIPT_FOC             // free goods — quantity in at zero cost
+  RECEIPT_POOL
+  RETURN_SUPPLIER
+  TRANSFER_OUT
+  TRANSFER_IN
+  TRANSFER_VARIANCE_OUT   // dispatched but never arrived; owned by the receiver
+  ADJUSTMENT_IN
+  ADJUSTMENT_OUT
+  STOCK_TAKE_IN
+  STOCK_TAKE_OUT
+  CONSUMPTION
+  CONSUMPTION_REVERSAL
+  WRITE_OFF_EXPIRY
+  WRITE_OFF_DAMAGE
+  REVALUATION             // value-only movement, zero quantity
+}
+
+enum StockDirection {
+  IN
+  OUT
+  NONE
+}
+
+enum StockSourceType {
+  PURCHASE_ORDER
+  DELIVERY_ORDER
+  POOL_ORDER
+  STOCK_ADJUSTMENT
+  STOCK_TAKE
+  STOCK_ISSUE
+  WRITE_OFF
+  STOCK_INVOICE
+  MIGRATION
+}
+
+model StockMovement {
+  id            String            @id @default(cuid())
+  /// Strict global ordering of postings.
+  seq           BigInt            @unique @default(autoincrement())
+
+  clinicId      String
+  clinic        Clinic            @relation(fields: [clinicId], references: [id])
+  itemId        String
+  item          StockItem         @relation(fields: [itemId], references: [id])
+  batchId       String?
+  batch         StockBatch?       @relation(fields: [batchId], references: [id])
+
+  type          StockMovementType
+  direction     StockDirection
+
+  qtyIn         Int               @default(0)
+  qtyOut        Int               @default(0)
+  unitCost      Decimal           @db.Decimal(12,4)
+  /// Unsigned value of this movement, for display.
+  totalCost     Decimal           @db.Decimal(14,2)
+  /// Signed value impact — the column stock valuation will sum.
+  valueDelta    Decimal           @db.Decimal(14,2)
+
+  /// Quantity balance immediately after this movement, captured under the
+  /// same row lock that performed the mutation.
+  balanceAfter  Int
+  valueAfter    Decimal           @db.Decimal(14,2)
+  avgCostAfter  Decimal           @db.Decimal(12,4)
+
+  sourceType    StockSourceType
+  sourceId      String?
+  sourceLineId  String?
+  reference     String
+  /// Deterministic idempotency key — replaying a posting collides here
+  /// instead of double-posting the goods.
+  postingKey    String            @unique
+
+  reversalOfId  String?
+  reversalOf    StockMovement?    @relation("StockMovementReversal", fields: [reversalOfId], references: [id])
+  reversedBy    StockMovement[]   @relation("StockMovementReversal")
+
+  note          String?
+  movementAt    DateTime          @default(now())
+  period        String            // "2026-08"
+  createdById   String?
+  createdBy     User?             @relation("StockMovementCreator", fields: [createdById], references: [id])
+  createdAt     DateTime          @default(now())
+
+  @@index([clinicId, itemId, seq])
+  @@index([clinicId, period])
+  @@index([itemId, seq])
+  @@index([batchId])
+  @@index([sourceType, sourceId])
+  @@index([type])
+  @@index([reversalOfId])
 }
 
 // Tracks payments made to a supplier (against their stock invoices)

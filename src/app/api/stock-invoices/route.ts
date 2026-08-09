@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { clinicScopeFor } from "@/lib/clinic-access";
+import { postMovement, postingKeys } from "@/lib/stock-ledger";
 import { z } from "zod";
 
 // ── Internal DO invoice ────────────────────────────────────────────────────
@@ -84,7 +85,8 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session?.user) return NextResponse.json({ error: "Unauthenticated" }, { status: 401 });
-  const role = (session.user as any).role as string;
+  const role   = (session.user as any).role as string;
+  const userId = (session.user as any).id   as string;
   if (!["SUPER_ADMIN", "FINANCE"].includes(role)) {
     return NextResponse.json({ error: "Forbidden: Finance or Super Admin only" }, { status: 403 });
   }
@@ -153,10 +155,22 @@ export async function POST(req: NextRequest) {
         if (cs && cs.avgUnitCost && cs.quantity > 0) {
           const qty = line.receivedQty ?? line.quantity;
           const correction = (invoicedCost - ordered) * qty;
-          const newAvg = (Number(cs.avgUnitCost) * cs.quantity + correction) / cs.quantity;
-          await prisma.clinicStock.update({
-            where: { clinicId_itemId: { clinicId: toClinicId, itemId: line.itemId } },
-            data: { avgUnitCost: Math.max(0, newAvg) },
+          const newAvg = Math.max(0, (Number(cs.avgUnitCost) * cs.quantity + correction) / cs.quantity);
+          // Value-only movement: quantity is untouched, the ledger records the
+          // revaluation so stock value stays reconcilable after a reprice.
+          await prisma.$transaction(async (tx) => {
+            await tx.clinicStock.update({
+              where: { clinicId_itemId: { clinicId: toClinicId, itemId: line.itemId } },
+              data: { avgUnitCost: newAvg },
+            });
+            await postMovement(tx, {
+              clinicId: toClinicId, itemId: line.itemId, type: "REVALUATION",
+              quantity: 0, unitCost: invoicedCost, valueDelta: correction,
+              balanceAfter: cs.quantity, avgCostAfter: newAvg,
+              sourceType: "STOCK_INVOICE", sourceId: null, sourceLineId: line.id,
+              reference: invoiceRef, postingKey: postingKeys.revalueDo(invoiceRef, line.id),
+              userId, note: `Repriced from ${ordered} to ${invoicedCost}`,
+            });
           });
         }
       }
@@ -224,10 +238,20 @@ export async function POST(req: NextRequest) {
         if (cs && cs.quantity > 0) {
           const qty = line.receivedQty ?? line.quantity;
           const correction = costDiff * qty;
-          const newAvg = (Number(cs.avgUnitCost ?? invoicedCost) * cs.quantity + correction) / cs.quantity;
-          await prisma.clinicStock.update({
-            where: { clinicId_itemId: { clinicId: po.clinicId, itemId: line.itemId } },
-            data:  { avgUnitCost: Math.max(0, newAvg) },
+          const newAvg = Math.max(0, (Number(cs.avgUnitCost ?? invoicedCost) * cs.quantity + correction) / cs.quantity);
+          await prisma.$transaction(async (tx) => {
+            await tx.clinicStock.update({
+              where: { clinicId_itemId: { clinicId: po.clinicId, itemId: line.itemId } },
+              data:  { avgUnitCost: newAvg },
+            });
+            await postMovement(tx, {
+              clinicId: po.clinicId, itemId: line.itemId, type: "REVALUATION",
+              quantity: 0, unitCost: invoicedCost, valueDelta: correction,
+              balanceAfter: cs.quantity, avgCostAfter: newAvg,
+              sourceType: "STOCK_INVOICE", sourceId: purchaseOrderId, sourceLineId: line.id,
+              reference: invoiceRef, postingKey: postingKeys.revaluePo(invoiceRef, line.id),
+              userId, note: `Repriced from ${originalCost} to ${invoicedCost}`,
+            });
           });
         }
       }

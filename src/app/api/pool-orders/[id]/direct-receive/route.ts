@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { receiveStock } from "@/lib/stock";
 import { checkPoolDirectReceive } from "@/lib/stock-receipt";
+import { postingKeys } from "@/lib/stock-ledger";
 import { getUserClinicIds, hasGlobalClinicScope } from "@/lib/clinic-access";
 
 const Schema = z.object({
@@ -26,7 +27,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const pool = await prisma.poolOrder.findUnique({
     where: { id: params.id },
-    include: { participants: { include: { items: { select: { itemId: true } } } } },
+    include: {
+      lines: { select: { itemId: true, unitCost: true, actualUnitCost: true } },
+      participants: { include: { items: { select: { itemId: true, unitCost: true } } } },
+    },
   });
   if (!pool) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -61,7 +65,29 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     });
     if (claimed.count === 0) return false;
 
-    await receiveStock(clinicId, lines, tx);
+    // Actual invoiced cost where the pool has been reconciled, otherwise the
+    // cost the branch ordered at — never zero.
+    const costOf = (itemId: string) => {
+      const poolLine = pool.lines.find((l) => l.itemId === itemId);
+      const partLine = participant!.items.find((i) => i.itemId === itemId) as { unitCost?: unknown } | undefined;
+      return Number(poolLine?.actualUnitCost ?? poolLine?.unitCost ?? partLine?.unitCost ?? 0);
+    };
+
+    await receiveStock(
+      clinicId,
+      lines.map((l) => ({
+        itemId:      l.itemId,
+        receivedQty: l.receivedQty,
+        unitCost:    costOf(l.itemId),
+        postingKey:  postingKeys.poolDirect(participant!.id, l.itemId),
+        sourceLineId: participant!.id,
+      })),
+      {
+        type: "RECEIPT_POOL", sourceType: "POOL_ORDER", sourceId: pool.id,
+        reference: pool.poRef, userId,
+      },
+      tx
+    );
     return true;
   });
 

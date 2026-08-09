@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { INVENTORY_ROLES, assertClinicAccess, clinicScopeFor, clinicWhere } from "@/lib/clinic-access";
+import { INVENTORY_ROLES, clinicScopeFor, clinicWhere } from "@/lib/clinic-access";
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -29,49 +29,22 @@ export async function GET(req: NextRequest) {
   return NextResponse.json(batches);
 }
 
-/** POST — manually register a batch for existing stock (traceability only, does not change ClinicStock qty) */
-export async function POST(req: NextRequest) {
-  const session = await getServerSession(authOptions);
-  if (!session?.user) return NextResponse.json({ error: "Unauthenticated" }, { status: 401 });
-  const role   = (session.user as any).role as string;
-  const userId = (session.user as any).id   as string;
-  if (!INVENTORY_ROLES.includes(role)) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-
-  const body = await req.json();
-  const { clinicId, itemId, batchNumber, expiryDate, quantity, unitCost, supplierId, receivedAt } = body;
-
-  if (!clinicId || !itemId || !batchNumber || !quantity) {
-    return NextResponse.json({ error: "clinicId, itemId, batchNumber and quantity are required" }, { status: 422 });
-  }
-
-  const access = await assertClinicAccess(role, userId, clinicId);
-  if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
-
-  // Verify the clinic actually has this item in stock
-  const stock = await prisma.clinicStock.findUnique({
-    where: { clinicId_itemId: { clinicId, itemId } },
-  });
-  if (!stock) return NextResponse.json({ error: "Item not found in clinic stock" }, { status: 404 });
-
-  const batch = await prisma.stockBatch.create({
-    data: {
-      clinicId,
-      itemId,
-      supplierId:  supplierId  || null,
-      batchNumber,
-      expiryDate:  expiryDate  ? new Date(expiryDate) : null,
-      quantity:    Number(quantity),
-      remainingQty: Number(quantity),
-      unitCost:    unitCost ? Number(unitCost) : (stock.avgUnitCost ?? 0),
-      receivedAt:  receivedAt ? new Date(receivedAt) : new Date(),
+/**
+ * POST — retired.
+ *
+ * A batch must originate from a legitimate receipt (GRN), so that every batch
+ * is explained by a stock movement in the ledger. The old endpoint created
+ * batches against stock with no receipt behind them, which the ledger cannot
+ * account for.
+ */
+export async function POST() {
+  return NextResponse.json(
+    {
+      error:
+        "Standalone batch registration has been retired. Batches are created by receiving " +
+        "goods against a Purchase Order, Delivery Order or Pool Order so that every batch is " +
+        "backed by a stock movement.",
     },
-    include: {
-      item:     { select: { id: true, name: true, sku: true, unit: true, category: true } },
-      supplier: { select: { id: true, name: true } },
-    },
-  });
-
-  return NextResponse.json(batch, { status: 201 });
+    { status: 410 }
+  );
 }

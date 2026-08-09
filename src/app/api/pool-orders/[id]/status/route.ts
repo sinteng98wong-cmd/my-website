@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { receivePoolStock, generateDOsFromPoolOrder } from "@/lib/stock";
+import { postingKeys } from "@/lib/stock-ledger";
 
 const StatusSchema = z.object({
   status: z.enum(["CLOSED", "SUBMITTED", "DELIVERED", "DISTRIBUTED", "INVOICED"]),
@@ -85,8 +86,24 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       if (claimed.count === 0) return null;
 
       if (pool.deliveryMode === "CENTRALISED") {
-        const stockLines = pool.lines.map((l) => ({ itemId: l.itemId, totalQty: l.totalQty }));
-        await receivePoolStock(pool.initiatingClinicId, stockLines, tx);
+        // Prefer the actual invoiced cost where the pool has been reconciled;
+        // pooled goods no longer enter stock at zero value.
+        const stockLines = pool.lines.map((l) => ({
+          itemId:     l.itemId,
+          totalQty:   l.totalQty,
+          unitCost:   Number(l.actualUnitCost ?? l.unitCost),
+          postingKey: postingKeys.poolCentral(pool.id, l.itemId),
+          sourceLineId: l.id,
+        }));
+        await receivePoolStock(
+          pool.initiatingClinicId,
+          stockLines,
+          {
+            type: "RECEIPT_POOL", sourceType: "POOL_ORDER", sourceId: pool.id,
+            reference: pool.poRef, userId,
+          },
+          tx
+        );
       }
       return tx.poolOrder.findUnique({ where: { id: params.id } });
     });
