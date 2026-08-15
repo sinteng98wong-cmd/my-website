@@ -16,14 +16,40 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
       clinic: { select: { name: true } },
       runBy: { select: { name: true } },
       approvedBy: { select: { name: true } },
+      lockedBy: { select: { name: true } },
       slips: {
-        include: { staffProfile: { select: { id: true, employeeId: true, user: { select: { name: true } } } } },
+        include: {
+          staffProfile: { select: { id: true, employeeId: true, user: { select: { name: true } } } },
+          approvedBy: { select: { name: true } },
+          releasedBy: { select: { name: true } },
+          bankPayment: { select: { id: true, paymentRef: true, status: true } },
+        },
         orderBy: { staffProfile: { user: { name: "asc" } } },
       },
     },
   });
   if (!run) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  return NextResponse.json(run);
+
+  const cfg = await prisma.clinicPayrollConfig.findUnique({
+    where: { clinicId: run.clinicId },
+    include: { firstApprover: { select: { id: true, name: true } }, secondApprover: { select: { id: true, name: true } } },
+  });
+  const userId = (session?.user as any)?.id as string;
+
+  return NextResponse.json({
+    ...run,
+    payrollConfig: {
+      firstApproverId: cfg?.firstApproverId ?? null,
+      firstApproverName: cfg?.firstApprover?.name ?? null,
+      secondApproverId: cfg?.secondApproverId ?? null,
+      secondApproverName: cfg?.secondApprover?.name ?? null,
+    },
+    viewer: {
+      userId,
+      isFirstApprover: !!cfg?.firstApproverId && cfg.firstApproverId === userId,
+      isSecondApprover: !!cfg?.secondApproverId && cfg.secondApproverId === userId,
+    },
+  });
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {

@@ -146,12 +146,17 @@ export async function buildPaySlip(
   const attendance = await prisma.attendanceRecord.findMany({
     where: { staffProfileId, clinicId, date: { gte: monthStart, lt: monthEnd } },
   });
+  // Lunch OT is only payable where the clinic grants the permission.
+  const payrollConfig = await prisma.clinicPayrollConfig.findUnique({ where: { clinicId } });
+  const lunchOtPayable = payrollConfig?.lunchOtAllowed ?? false;
+
   let daysWorked = 0, daysAbsent = 0, daysPublicHoliday = 0, overtimeMinutes = 0;
   for (const a of attendance) {
     if (a.status === "PRESENT" || a.status === "LATE" || a.status === "REMOTE") daysWorked++;
     else if (a.status === "ABSENT") daysAbsent++;
     else if (a.status === "PUBLIC_HOLIDAY") daysPublicHoliday++;
     overtimeMinutes += a.overtimeMinutes ?? 0;
+    if (lunchOtPayable) overtimeMinutes += a.lunchOtMinutes ?? 0;
   }
 
   // Approved leave overlapping the month

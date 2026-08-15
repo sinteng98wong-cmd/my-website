@@ -64,6 +64,22 @@ export default async function ConfigPage() {
           </Link>
 
           <Link
+            href="/config/payroll"
+            className="card p-4 hover:shadow-md transition-shadow flex items-start gap-4"
+          >
+            <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center shrink-0">
+              <span className="text-blue-700 text-lg">🏦</span>
+            </div>
+            <div>
+              <p className="font-semibold text-slate-800">Payroll Settings</p>
+              <p className="text-sm text-slate-500 mt-0.5">
+                Per-branch 1st/2nd payment approvers, the Head Nurse who submits
+                monthly attendance, and the Lunch OT permission.
+              </p>
+            </div>
+          </Link>
+
+          <Link
             href="/config/account-codes"
             className="card p-4 hover:shadow-md transition-shadow flex items-start gap-4"
           >

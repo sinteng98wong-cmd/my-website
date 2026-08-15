@@ -135,6 +135,9 @@ model Clinic {
   locumPayoutLines     LocumPayoutLine[]
   payoutSchemes        PayoutScheme[]
   payoutScanRates      PayoutScanRate[]
+  stockMovements       StockMovement[]
+  stockTakes           StockTake[]
+  stockIssues          StockIssue[]
 
   // Branch contact info
   address    String?
@@ -166,6 +169,13 @@ model Clinic {
   monthlyRecons        MonthlyRecon[]
   panelRemittances     PanelRemittance[]
   doctorDailySignoffs  DoctorDailySignoff[]
+  // Payroll payment workflow
+  payrollConfig            ClinicPayrollConfig?
+  payrollBankPayments      PayrollBankPayment[]
+  attendanceMonthSubmissions AttendanceMonthSubmission[]
+  // Stock period locking
+  stockPeriodLocks         StockPeriodLock[]
+  openingBalances          OpeningBalance[]
 
   @@index([entityId])
 }
@@ -268,6 +278,29 @@ model User {
   lockedRecons               MonthlyRecon[]           @relation("ReconLockedBy")
   confirmedMethodSettlements MethodSettlementEntry[]  @relation("MethodSettlementConfirmedBy")
   createdRemittances         PanelRemittance[]        @relation("PanelRemittanceCreatedBy")
+  // Payroll payment workflow relations
+  lockedPayrollRuns          PayrollRun[]                @relation("PayrollLocker")
+  firstApproverOfClinics     ClinicPayrollConfig[]       @relation("PayrollFirstApprover")
+  secondApproverOfClinics    ClinicPayrollConfig[]       @relation("PayrollSecondApprover")
+  approvedPaySlips           PaySlip[]                   @relation("PaySlipApprover")
+  releasedPaySlips           PaySlip[]                   @relation("PaySlipReleaser")
+  preparedBankPayments       PayrollBankPayment[]        @relation("BankPaymentPreparer")
+  approvedBankPayments       PayrollBankPayment[]        @relation("BankPaymentApprover")
+  rejectedBankPayments       PayrollBankPayment[]        @relation("BankPaymentRejecter")
+  submittedAttendanceMonths  AttendanceMonthSubmission[] @relation("AttendanceMonthSubmitter")
+  stockMovements             StockMovement[]             @relation("StockMovementCreator")
+  createdStockTakes          StockTake[]                 @relation("StockTakeCreator")
+  submittedStockTakes        StockTake[]                 @relation("StockTakeSubmitter")
+  reviewedStockTakes         StockTake[]                 @relation("StockTakeReviewer")
+  countedStockTakeLines      StockTakeLine[]             @relation("StockTakeCounter")
+  createdStockIssues         StockIssue[]                @relation("StockIssueCreator")
+  submittedStockIssues       StockIssue[]                @relation("StockIssueSubmitter")
+  reviewedStockIssues        StockIssue[]                @relation("StockIssueReviewer")
+  createdOpeningBalances     OpeningBalance[]            @relation("OpeningBalanceCreator")
+  submittedOpeningBalances   OpeningBalance[]            @relation("OpeningBalanceSubmitter")
+  reviewedOpeningBalances    OpeningBalance[]            @relation("OpeningBalanceReviewer")
+  lockedStockPeriods         StockPeriodLock[]           @relation("StockPeriodLockedBy")
+  unlockedStockPeriods       StockPeriodLock[]           @relation("StockPeriodUnlockedBy")
   createdAt            DateTime               @default(now())
 }
 
@@ -392,6 +425,7 @@ model StaffProfile {
   documents         StaffDocument[]
   employmentHistory EmploymentHistory[]
   licenses          License[]
+  headNurseOf       ClinicPayrollConfig[] @relation("ClinicHeadNurse")
 }
 
 model Attendance {
@@ -982,6 +1016,10 @@ model StockItem {
   participantLines PoolParticipantLine[]
   batches        StockBatch[]
   poLines        POLine[]
+  movements      StockMovement[]
+  stockTakeLines StockTakeLine[]
+  issueLines     StockIssueLine[]
+  openingBalanceLines OpeningBalanceLine[]
 }
 
 model ClinicStock {
@@ -1014,9 +1052,358 @@ model StockBatch {
   unitCost    Decimal   @db.Decimal(10,2)
   doLineId    String?   // traceability back to the DO line
   receivedAt  DateTime  @default(now())
+  movements   StockMovement[]
+  issueLines  StockIssueLine[]       @relation("StockIssueLineBatch")
+  allocations StockIssueAllocation[] @relation("StockIssueAllocationBatch")
+  transfers   DOLineBatch[]          @relation("DOLineBatchSource")
   @@index([clinicId, itemId])
   @@index([expiryDate])
   @@index([clinicId, expiryDate])
+}
+
+// ── Stock Ledger ──────────────────────────────────────────────────────────
+// The authoritative, immutable history of every stock movement.
+//
+// Phase 1 (Tier 3A): written alongside ClinicStock, which remains the
+// operational balance. The ledger is not yet the reporting source of truth.
+//
+// Immutability is enforced by database trigger, not only by convention:
+// historical rows can never be updated, and corrections must be posted as a
+// new compensating movement linked through reversalOfId.
+
+enum StockMovementType {
+  OPENING_BALANCE
+  RECEIPT_PO
+  RECEIPT_FOC             // free goods — quantity in at zero cost
+  RECEIPT_POOL
+  RETURN_SUPPLIER
+  TRANSFER_OUT
+  TRANSFER_IN
+  TRANSFER_VARIANCE_OUT   // dispatched but never arrived; owned by the receiver
+  ADJUSTMENT_IN
+  ADJUSTMENT_OUT
+  STOCK_TAKE_IN
+  STOCK_TAKE_OUT
+  CONSUMPTION
+  CONSUMPTION_REVERSAL
+  WRITE_OFF_EXPIRY
+  WRITE_OFF_DAMAGE
+  WRITE_OFF_WASTAGE       // spoiled or unusable without being damaged or expired
+  REVALUATION             // value-only movement, zero quantity
+  /// Supplier invoice price correction for stock that has already left
+  /// inventory. Value-only, zero quantity — see lib/stock-ppv.
+  PURCHASE_PRICE_VARIANCE
+}
+
+enum StockDirection {
+  IN
+  OUT
+  NONE
+}
+
+enum OpeningBalanceStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+enum StockPeriodStatus {
+  OPEN
+  LOCKED
+}
+
+enum DriftRunStatus {
+  SUCCESS
+  FAILED
+}
+
+enum DriftRunTrigger {
+  CRON
+  MANUAL
+}
+
+/// Audit record of each stock-ledger drift detection run. Monitoring metadata
+/// for Phase 1 dual-write — not part of the ledger itself.
+model StockDriftRun {
+  id           String          @id @default(cuid())
+  trigger      DriftRunTrigger @default(CRON)
+  status       DriftRunStatus
+  startedAt    DateTime
+  finishedAt   DateTime
+  durationMs   Int
+  positions    Int             @default(0)
+  movements    Int             @default(0)
+  errorCount   Int             @default(0)
+  warningCount Int             @default(0)
+  /// Pre-ledger MISSING_MOVEMENTS rows land here. Never treated as a failure.
+  infoCount    Int             @default(0)
+  clean        Boolean         @default(false)
+  /// Errors and warnings only, bounded. Informational rows are counted, not stored.
+  findings     Json            @default("[]")
+  errorMessage String?
+  alertSentAt  DateTime?
+  createdAt    DateTime        @default(now())
+  @@index([startedAt])
+  @@index([status])
+}
+
+enum StockSourceType {
+  PURCHASE_ORDER
+  DELIVERY_ORDER
+  POOL_ORDER
+  STOCK_ADJUSTMENT
+  STOCK_TAKE
+  STOCK_ISSUE
+  WRITE_OFF
+  STOCK_INVOICE
+  MIGRATION
+  /// Pre-ledger stock established by the Opening Balance workflow.
+  OPENING_BALANCE
+}
+
+model StockMovement {
+  id            String            @id @default(cuid())
+  /// Strict global ordering of postings.
+  seq           BigInt            @unique @default(autoincrement())
+
+  clinicId      String
+  clinic        Clinic            @relation(fields: [clinicId], references: [id])
+  itemId        String
+  item          StockItem         @relation(fields: [itemId], references: [id])
+  batchId       String?
+  batch         StockBatch?       @relation(fields: [batchId], references: [id])
+
+  type          StockMovementType
+  direction     StockDirection
+
+  qtyIn         Int               @default(0)
+  qtyOut        Int               @default(0)
+  unitCost      Decimal           @db.Decimal(12,4)
+  /// Unsigned value of this movement, for display.
+  totalCost     Decimal           @db.Decimal(14,2)
+  /// Signed value impact — the column stock valuation will sum.
+  valueDelta    Decimal           @db.Decimal(14,2)
+
+  /// Quantity balance immediately after this movement, captured under the
+  /// same row lock that performed the mutation.
+  balanceAfter  Int
+  valueAfter    Decimal           @db.Decimal(14,2)
+  avgCostAfter  Decimal           @db.Decimal(12,4)
+
+  sourceType    StockSourceType
+  sourceId      String?
+  sourceLineId  String?
+  reference     String
+  /// Deterministic idempotency key — replaying a posting collides here
+  /// instead of double-posting the goods.
+  postingKey    String            @unique
+
+  reversalOfId  String?
+  reversalOf    StockMovement?    @relation("StockMovementReversal", fields: [reversalOfId], references: [id])
+  reversedBy    StockMovement[]   @relation("StockMovementReversal")
+
+  note          String?
+  movementAt    DateTime          @default(now())
+  period        String            // "2026-08"
+  createdById   String?
+  createdBy     User?             @relation("StockMovementCreator", fields: [createdById], references: [id])
+  createdAt     DateTime          @default(now())
+
+  @@index([clinicId, itemId, seq])
+  @@index([clinicId, period])
+  @@index([itemId, seq])
+  @@index([batchId])
+  @@index([sourceType, sourceId])
+  @@index([type])
+  @@index([reversalOfId])
+}
+
+// ── Stock Take & Adjustment ───────────────────────────────────────────────
+// Operational physical counting. A count records the system quantity at the
+// time it is raised, staff enter what they physically find, and only PIC
+// approval turns the variance into adjustment movements in the ledger.
+//
+// Nothing here writes ClinicStock directly — approval goes through the same
+// atomic mutation path every other stock movement uses.
+
+enum StockTakeStatus {
+  DRAFT
+  SUBMITTED
+  RECOUNT_REQUIRED   // stock moved since the count; must be re-counted
+  APPROVED
+  REJECTED
+}
+
+enum StockAdjustmentReason {
+  STOCK_COUNT_VARIANCE
+  DAMAGED
+  EXPIRED
+  WASTAGE
+  FOUND_STOCK
+  DATA_CORRECTION
+  OTHER
+}
+
+model StockTake {
+  id            String          @id @default(cuid())
+  reference     String          @unique          // STK-202608-001
+  clinicId      String
+  clinic        Clinic          @relation(fields: [clinicId], references: [id])
+  status        StockTakeStatus @default(DRAFT)
+  notes         String?
+
+  createdById   String
+  createdBy     User            @relation("StockTakeCreator", fields: [createdById], references: [id])
+  createdAt     DateTime        @default(now())
+  submittedById String?
+  submittedBy   User?           @relation("StockTakeSubmitter", fields: [submittedById], references: [id])
+  submittedAt   DateTime?
+  reviewedById  String?
+  reviewedBy    User?           @relation("StockTakeReviewer", fields: [reviewedById], references: [id])
+  reviewedAt    DateTime?
+  reviewNote    String?
+  postedAt      DateTime?
+
+  totalVarianceQty   Int        @default(0)
+  totalVarianceValue Decimal    @default(0) @db.Decimal(14,2)
+
+  lines         StockTakeLine[]
+  updatedAt     DateTime        @updatedAt
+  @@index([clinicId, status])
+  @@index([createdAt])
+}
+
+model StockTakeLine {
+  id           String                 @id @default(cuid())
+  stockTakeId  String
+  stockTake    StockTake              @relation(fields: [stockTakeId], references: [id])
+  itemId       String
+  item         StockItem              @relation(fields: [itemId], references: [id])
+
+  /// System quantity when the count was raised, refreshed on a recount.
+  systemQty    Int
+  physicalQty  Int?
+  /// Average cost snapshot, for the estimated variance value before posting.
+  avgUnitCost  Decimal                @db.Decimal(12,4)
+  reason       StockAdjustmentReason?
+  note         String?
+  countedById  String?
+  countedBy    User?                  @relation("StockTakeCounter", fields: [countedById], references: [id])
+  countedAt    DateTime?
+
+  /// Frozen at approval — what was actually posted.
+  postedVarianceQty Int?
+  postedUnitCost    Decimal?          @db.Decimal(12,4)
+  movementId        String?
+
+  @@unique([stockTakeId, itemId])
+  @@index([stockTakeId])
+}
+
+// ── Stock Issue / Consumption ─────────────────────────────────────────────
+// The normal stock-out path: clinical consumption, general usage, and
+// expiry/damage/wastage write-offs. Everything posts through the same atomic
+// mutation helpers and the same immutable ledger as receipts and transfers.
+//
+// FEFO decides which physical batch is depleted; weighted average still
+// decides the money. The two are independent.
+
+enum StockIssueReason {
+  CLINICAL_CONSUMPTION
+  GENERAL_USAGE
+  DAMAGED
+  WASTAGE
+  EXPIRED
+  OTHER
+}
+
+enum StockIssueStatus {
+  DRAFT
+  PENDING_APPROVAL   // write-offs await PIC sign-off
+  POSTED
+  REJECTED
+}
+
+/// Where the issue originated. MANUAL today; VISIT/TREATMENT let a future
+/// clinical flow reference this same mechanism without reshaping it.
+enum StockIssueSource {
+  MANUAL
+  VISIT
+  TREATMENT
+}
+
+model StockIssue {
+  id            String            @id @default(cuid())
+  reference     String            @unique          // ISS-202608-001
+  clinicId      String
+  clinic        Clinic            @relation(fields: [clinicId], references: [id])
+  status        StockIssueStatus  @default(DRAFT)
+  reason        StockIssueReason
+  notes         String?
+
+  /// Extensible origin — a future Visit/Treatment issues stock through here.
+  sourceKind    StockIssueSource  @default(MANUAL)
+  sourceRefId   String?
+
+  createdById   String
+  createdBy     User              @relation("StockIssueCreator", fields: [createdById], references: [id])
+  createdAt     DateTime          @default(now())
+  submittedById String?
+  submittedBy   User?             @relation("StockIssueSubmitter", fields: [submittedById], references: [id])
+  submittedAt   DateTime?
+  reviewedById  String?
+  reviewedBy    User?             @relation("StockIssueReviewer", fields: [reviewedById], references: [id])
+  reviewedAt    DateTime?
+  reviewNote    String?
+  postedAt      DateTime?
+
+  totalQty      Int               @default(0)
+  totalValue    Decimal           @default(0) @db.Decimal(14,2)
+
+  lines         StockIssueLine[]
+  updatedAt     DateTime          @updatedAt
+  @@index([clinicId, status])
+  @@index([createdAt])
+  @@index([sourceKind, sourceRefId])
+}
+
+model StockIssueLine {
+  id           String                 @id @default(cuid())
+  stockIssueId String
+  stockIssue   StockIssue             @relation(fields: [stockIssueId], references: [id])
+  itemId       String
+  item         StockItem              @relation(fields: [itemId], references: [id])
+  quantity     Int
+  /// Pin the issue to one batch (used by expiry write-offs). Null = FEFO.
+  batchId      String?
+  batch        StockBatch?            @relation("StockIssueLineBatch", fields: [batchId], references: [id])
+  note         String?
+
+  /// Frozen at posting.
+  unitCost     Decimal?               @db.Decimal(12,4)
+  movementId   String?
+
+  allocations  StockIssueAllocation[]
+  @@index([stockIssueId])
+  @@index([itemId])
+}
+
+/// What was physically taken, batch by batch. A null batch is an explicit
+/// unbatched allocation — stock on hand with no batch record behind it — kept
+/// distinguishable from real batch stock rather than silently merged.
+model StockIssueAllocation {
+  id           String         @id @default(cuid())
+  lineId       String
+  line         StockIssueLine @relation(fields: [lineId], references: [id])
+  batchId      String?
+  batch        StockBatch?    @relation("StockIssueAllocationBatch", fields: [batchId], references: [id])
+  batchNumber  String?
+  expiryDate   DateTime?
+  quantity     Int
+  createdAt    DateTime       @default(now())
+  @@index([lineId])
+  @@index([batchId])
 }
 
 // Tracks payments made to a supplier (against their stock invoices)
@@ -1083,7 +1470,32 @@ model DOLine {
   batchNumber String?       // batch number assigned on receipt
   expiryDate  DateTime?     // expiry date assigned on receipt
   notes       String?
+  /// Which physical batches this line took at dispatch, so the receiving
+  /// clinic recreates the same identities instead of minting new ones.
+  batchAllocations DOLineBatch[]
   @@index([doId])
+}
+
+/// A physical batch carried by one delivery order line.
+///
+/// Written at dispatch from what the source clinic actually depleted, and read
+/// at receipt to recreate the same batch identity at the destination. Without
+/// it a transfer would create destination batch quantity out of nothing while
+/// the source batch stayed full.
+model DOLineBatch {
+  id            String      @id @default(cuid())
+  doLineId      String
+  doLine        DOLine      @relation(fields: [doLineId], references: [id])
+  /// Batch depleted at source. Null when the source stock was unbatched.
+  sourceBatchId String?
+  sourceBatch   StockBatch? @relation("DOLineBatchSource", fields: [sourceBatchId], references: [id])
+  /// Identity to recreate at the destination. Null = unbatched, not invented.
+  batchNumber   String?
+  expiryDate    DateTime?
+  quantity      Int
+  createdAt     DateTime    @default(now())
+  @@index([doLineId])
+  @@index([sourceBatchId])
 }
 
 enum InvoiceSource {
@@ -1099,7 +1511,10 @@ model StockInvoice {
   fromEntity      Entity          @relation(fields: [fromEntityId], references: [id])
   supplierId      String?
   supplier        Supplier?       @relation(fields: [supplierId], references: [id])
-  purchaseOrderId String?
+  /// Unique: a purchase order carries at most one supplier invoice. Postgres
+  /// allows many NULLs, so internal (DO-based) invoices are unaffected. This is
+  /// the database-level backstop against revaluing the same receipt twice.
+  purchaseOrderId String?         @unique
   purchaseOrder   PurchaseOrder?  @relation(fields: [purchaseOrderId], references: [id])
   month           String
   totalAmount     Decimal         @db.Decimal(10,2)
@@ -1233,7 +1648,7 @@ model PurchaseOrder {
   confirmedAt   DateTime?
   receivedAt    DateTime?
   lines         POLine[]
-  stockInvoices StockInvoice[]
+  stockInvoice  StockInvoice?
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
   @@index([supplierId, status])
@@ -1248,6 +1663,10 @@ model POLine {
   item        StockItem     @relation(fields: [itemId], references: [id])
   quantity    Int
   receivedQty Int?
+  /// Quantity already posted into ClinicStock. Receipts post only the
+  /// difference against this baseline, so re-running a receipt is a no-op and
+  /// receiving the remainder after a PARTIAL never re-posts earlier goods.
+  postedQty   Int           @default(0)
   unitCost    Decimal       @db.Decimal(10,2)
   batchNumber String?
   expiryDate  DateTime?
@@ -1718,6 +2137,9 @@ model AttendanceRecord {
   status          AttendanceStatus @default(PRESENT)
   lateMinutes     Int?
   overtimeMinutes Int?
+  /// OT worked through the lunch break. Only recordable when the clinic's
+  /// payroll config allows Lunch OT (ClinicPayrollConfig.lunchOtAllowed).
+  lunchOtMinutes  Int              @default(0)
   notes           String?
   recordedById    String?
   recordedBy      User?            @relation("AttendanceRecorder", fields: [recordedById], references: [id])
@@ -1905,7 +2327,7 @@ model PayrollRun {
   month        String         // "2026-06"
   clinicId     String
   clinic       Clinic         @relation(fields: [clinicId], references: [id])
-  status       String         // DRAFT | PROCESSING | APPROVED | PAID
+  status       String         // DRAFT | PROCESSING | LOCKED | PAID
   totalGross   Decimal        @db.Decimal(12,2)
   totalNet     Decimal        @db.Decimal(12,2)
   totalEpf     Decimal        @db.Decimal(12,2)
@@ -1916,8 +2338,13 @@ model PayrollRun {
   approvedById String?
   approvedBy   User?          @relation("PayrollApprover", fields: [approvedById], references: [id])
   approvedAt   DateTime?
+  // HR payroll lock — the gate that opens the payment approval workflow
+  lockedById   String?
+  lockedBy     User?          @relation("PayrollLocker", fields: [lockedById], references: [id])
+  lockedAt     DateTime?
   paidAt       DateTime?
   slips        PaySlip[]
+  bankPayments PayrollBankPayment[]
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
   @@unique([clinicId, month])
@@ -1952,9 +2379,108 @@ model PaySlip {
   daysPublicHoliday Int         @default(0)
   overtimeMinutes Int           @default(0)
   slipUrl         String?
+  // ── Payment approval workflow ──────────────────────────────────────────
+  // PENDING → APPROVED (1st approver) → PAID (2nd approver signs the bank
+  // payment) → RELEASED (HR hands the slip to the employee)
+  status          String        @default("PENDING")
+  approvedById    String?
+  approvedBy      User?         @relation("PaySlipApprover", fields: [approvedById], references: [id])
+  approvedAt      DateTime?
+  approvalNote    String?
+  bankPaymentId   String?
+  bankPayment     PayrollBankPayment? @relation(fields: [bankPaymentId], references: [id])
+  paidAt          DateTime?
+  releasedById    String?
+  releasedBy      User?         @relation("PaySlipReleaser", fields: [releasedById], references: [id])
+  releasedAt      DateTime?
   createdAt       DateTime      @default(now())
   @@index([payrollRunId])
   @@index([staffProfileId])
+  @@index([bankPaymentId])
+  @@index([status])
+}
+
+enum BankPaymentStatus {
+  DRAFT
+  PENDING_APPROVAL
+  PAID
+  REJECTED
+}
+
+/// A bank payment batch prepared by Accounts for a set of approved payslips.
+/// Accounts prepares/uploads it but may never approve it — only the clinic's
+/// configured 2nd payment approver can, which releases the money (PAID).
+model PayrollBankPayment {
+  id              String            @id @default(cuid())
+  paymentRef      String            @unique   // BP-202606-001
+  clinicId        String
+  clinic          Clinic            @relation(fields: [clinicId], references: [id])
+  payrollRunId    String
+  payrollRun      PayrollRun        @relation(fields: [payrollRunId], references: [id])
+  status          BankPaymentStatus @default(PENDING_APPROVAL)
+  totalAmount     Decimal           @db.Decimal(12,2)
+  bankName        String?
+  accountNo       String?
+  paymentDate     DateTime?
+  fileUrl         String?           // uploaded bank payment / giro file
+  fileName        String?
+  notes           String?
+  preparedById    String
+  preparedBy      User              @relation("BankPaymentPreparer", fields: [preparedById], references: [id])
+  preparedAt      DateTime          @default(now())
+  approvedById    String?
+  approvedBy      User?             @relation("BankPaymentApprover", fields: [approvedById], references: [id])
+  approvedAt      DateTime?
+  approvalNote    String?
+  rejectedById    String?
+  rejectedBy      User?             @relation("BankPaymentRejecter", fields: [rejectedById], references: [id])
+  rejectedAt      DateTime?
+  rejectionReason String?
+  slips           PaySlip[]
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  @@index([clinicId, status])
+  @@index([payrollRunId])
+}
+
+/// Per-clinic payroll configuration. Payment approvers, the branch Head Nurse
+/// who may submit monthly attendance, and the Lunch OT permission all live
+/// here so nothing is hard-coded to the PV director/PIC.
+model ClinicPayrollConfig {
+  id                      String        @id @default(cuid())
+  clinicId                String        @unique
+  clinic                  Clinic        @relation(fields: [clinicId], references: [id])
+  // Payment approvers (independent of the Payment Voucher director/PIC)
+  firstApproverId         String?
+  firstApprover           User?         @relation("PayrollFirstApprover", fields: [firstApproverId], references: [id])
+  secondApproverId        String?
+  secondApprover          User?         @relation("PayrollSecondApprover", fields: [secondApproverId], references: [id])
+  // Branch Head Nurse — the only staff member who may submit monthly attendance
+  headNurseStaffProfileId String?
+  headNurse               StaffProfile? @relation("ClinicHeadNurse", fields: [headNurseStaffProfileId], references: [id])
+  // Lunch OT is a clinic-level permission, not an attendance exception reason
+  lunchOtAllowed          Boolean       @default(false)
+  lunchOtMaxMinutes       Int           @default(60)
+  createdAt               DateTime      @default(now())
+  updatedAt               DateTime      @updatedAt
+  @@index([headNurseStaffProfileId])
+}
+
+/// Monthly attendance sign-off for a branch. Submitted by the designated
+/// Head Nurse only; payroll for the month cannot be locked without it.
+model AttendanceMonthSubmission {
+  id            String   @id @default(cuid())
+  clinicId      String
+  clinic        Clinic   @relation(fields: [clinicId], references: [id])
+  month         String   // "2026-06"
+  staffCount    Int      @default(0)
+  recordCount   Int      @default(0)
+  notes         String?
+  submittedById String
+  submittedBy   User     @relation("AttendanceMonthSubmitter", fields: [submittedById], references: [id])
+  submittedAt   DateTime @default(now())
+  @@unique([clinicId, month])
+  @@index([month])
 }
 
 model ClaimLimit {
@@ -2753,4 +3279,103 @@ model Shift {
   // migration (see migration.sql), plus the app-level conflict engine.
   @@index([userId, startTime])
   @@index([branchId, startTime])
+}
+
+// ── Stock Period Lock ─────────────────────────────────────────────────────
+// Closes a clinic's stock month. Deliberately separate from MonthlyRecon:
+// that model means "cash settlement reconciled", which closes on a different
+// cadence, on different evidence, under different authority. Sharing one row
+// would make locking cash force-close stock.
+//
+// The row is the audit record. Locking stamps who and when; unlocking keeps
+// the row, flips the status and records who, when and why.
+
+model StockPeriodLock {
+  id           String            @id @default(cuid())
+  clinicId     String
+  clinic       Clinic            @relation(fields: [clinicId], references: [id])
+  /// "YYYY-MM" in Malaysia time — see periodOf() in lib/stock-ledger.
+  period       String
+  status       StockPeriodStatus @default(LOCKED)
+  notes        String?
+  lockedById   String
+  lockedBy     User              @relation("StockPeriodLockedBy", fields: [lockedById], references: [id])
+  lockedAt     DateTime          @default(now())
+  unlockedById String?
+  unlockedBy   User?             @relation("StockPeriodUnlockedBy", fields: [unlockedById], references: [id])
+  unlockedAt   DateTime?
+  /// Mandatory when unlocking — a closed period is reopened only on record.
+  unlockReason String?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  @@unique([clinicId, period])
+  @@index([clinicId])
+  @@index([status])
+}
+
+// ── Opening Balance ───────────────────────────────────────────────────────
+// Establishes a clinic's first ledger position. Deliberately a reviewed
+// document rather than a direct posting: opening stock is entered from a
+// physical count by the branch, and the numbers become immutable ledger
+// history the moment they are approved.
+//
+// Posting reuses receiveStock(), so ClinicStock, the ledger, batch creation
+// and the period lock all behave exactly as they do for any other receipt.
+
+model OpeningBalance {
+  id            String               @id @default(cuid())
+  reference     String               @unique   // OB-202608-001
+  clinicId      String
+  clinic        Clinic               @relation(fields: [clinicId], references: [id])
+  status        OpeningBalanceStatus @default(DRAFT)
+  notes         String?
+
+  createdById   String
+  createdBy     User                 @relation("OpeningBalanceCreator", fields: [createdById], references: [id])
+  createdAt     DateTime             @default(now())
+  submittedById String?
+  submittedBy   User?                @relation("OpeningBalanceSubmitter", fields: [submittedById], references: [id])
+  submittedAt   DateTime?
+  reviewedById  String?
+  reviewedBy    User?                @relation("OpeningBalanceReviewer", fields: [reviewedById], references: [id])
+  reviewedAt    DateTime?
+  reviewNote    String?
+  postedAt      DateTime?
+
+  /// Frozen at approval, for reporting without recomputing from the lines.
+  totalQuantity Int                  @default(0)
+  totalValue    Decimal              @default(0) @db.Decimal(14,2)
+
+  lines         OpeningBalanceLine[]
+  updatedAt     DateTime             @updatedAt
+  @@index([clinicId, status])
+  @@index([createdAt])
+}
+
+model OpeningBalanceLine {
+  id               String         @id @default(cuid())
+  openingBalanceId String
+  openingBalance   OpeningBalance @relation(fields: [openingBalanceId], references: [id], onDelete: Cascade)
+  itemId           String
+  item             StockItem      @relation(fields: [itemId], references: [id])
+
+  /// Null while the branch is still filling the draft in. Both must be
+  /// present and valid before the document can be submitted.
+  quantity         Int?
+  unitCost         Decimal?       @db.Decimal(12,4)
+
+  /// Optional. Absent means the opening stock is genuinely unbatched — no
+  /// batch identity is ever invented for it.
+  batchNumber      String?
+  expiryDate       DateTime?
+  note             String?
+
+  /// Frozen at approval — what was actually posted.
+  postedQty        Int?
+  postedUnitCost   Decimal?       @db.Decimal(12,4)
+  movementId       String?
+
+  @@unique([openingBalanceId, itemId])
+  @@index([openingBalanceId])
 }

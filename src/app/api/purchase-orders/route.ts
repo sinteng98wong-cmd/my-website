@@ -3,20 +3,26 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { generatePurchaseOrderRef } from "@/lib/ref-generator";
+import { INVENTORY_ROLES, assertClinicAccess, clinicScopeFor, clinicWhere } from "@/lib/clinic-access";
 
-const ALLOWED = ["SUPER_ADMIN", "FINANCE", "CLINIC_MANAGER", "STOREKEEPER"];
+const ALLOWED = INVENTORY_ROLES;
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session?.user) return NextResponse.json({ error: "Unauthenticated" }, { status: 401 });
-  const role = (session.user as any).role as string;
+  const role   = (session.user as any).role as string;
+  const userId = (session.user as any).id   as string;
   if (!ALLOWED.includes(role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const status = req.nextUrl.searchParams.get("status");
   const supplierId = req.nextUrl.searchParams.get("supplierId");
 
+  const scope = await clinicScopeFor(role, userId, req.nextUrl.searchParams.get("clinicId"));
+  if (!scope.ok) return NextResponse.json({ error: scope.error }, { status: scope.status });
+
   const orders = await prisma.purchaseOrder.findMany({
     where: {
+      ...clinicWhere(scope.clinicIds),
       ...(status     && { status: status as any }),
       ...(supplierId && { supplierId }),
     },
@@ -51,6 +57,10 @@ export async function POST(req: NextRequest) {
   if (!clinicId || !supplierId || !lines?.length) {
     return NextResponse.json({ error: "clinicId, supplierId and at least one line are required" }, { status: 422 });
   }
+
+  // The receiving clinic comes from the request, so it must be authorized.
+  const access = await assertClinicAccess(role, userId, clinicId);
+  if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
 
   const poRef = await generatePurchaseOrderRef();
 

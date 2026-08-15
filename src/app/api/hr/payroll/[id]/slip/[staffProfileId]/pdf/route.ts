@@ -17,8 +17,10 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string;
   if (!slip) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const isManager = ["SUPER_ADMIN", "FINANCE", "CLINIC_MANAGER"].includes(role);
-  if (!isManager && slip.staffProfile.userId !== userId) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!isManager) {
+    if (slip.staffProfile.userId !== userId) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    // Employees see their payslip only after HR releases it.
+    if (slip.status !== "RELEASED") return NextResponse.json({ error: "Payslip has not been released yet" }, { status: 403 });
   }
 
   const buf = await generatePaySlipPdf(slip.id);

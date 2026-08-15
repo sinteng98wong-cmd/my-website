@@ -25,6 +25,11 @@ export const DEFAULT_CODES: Array<{
   { entryType: "DEPOSIT_REFUND", accountCode: "2150",  subCode: "DEP",      description: "Patient Deposit Refunded",           module: "Deposit",       sortOrder: 17 },
   // Sales return — revenue reversal for treatment failures (posted in current period)
   { entryType: "SALES_RETURN",   accountCode: "5001",  subCode: "RTN",      description: "Sales Return — Treatment Failure",   module: "Sales-Return",  sortOrder: 18 },
+  // Stock valuation variances. PPV is the portion of a supplier invoice price
+  // correction relating to stock that has already left inventory; it is a
+  // valuation variance, never another supplier payment.
+  { entryType: "STOCK_PPV",      accountCode: "5008",  subCode: "PPV",      description: "Purchase Price Variance",            module: "Stock",         sortOrder: 19 },
+  { entryType: "STOCK_REVAL",    accountCode: "1400",  subCode: "REV",      description: "Inventory Revaluation",              module: "Stock",         sortOrder: 20 },
 ];
 
 export type JournalRow = {

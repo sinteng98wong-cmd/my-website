@@ -149,7 +149,7 @@ export function BatchesClient({
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
           </select>
-          <button type="button" onClick={() => setFormOpen((v) => !v)} className="btn-primary text-sm">
+          <button type="button" onClick={() => setFormOpen((v) => !v)} className="btn-primary text-sm" disabled title="Batches are created by receiving goods against a PO, DO or Pool Order">
             {formOpen ? "Cancel" : "+ Register Batch"}
           </button>
         </div>

@@ -16,6 +16,8 @@ export function AttendanceClient({ clinics }: { clinics: Clinic[] }) {
   const [summary, setSummary] = useState<any[]>([]);
   const [editing, setEditing] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  const [submission, setSubmission] = useState<any>(null);
+  const [msg, setMsg] = useState("");
 
   async function loadDay() {
     const d = await fetch(`/api/hr/attendance?clinicId=${clinicId}&date=${date}`).then(r => r.json()).catch(() => []);
@@ -26,11 +28,28 @@ export function AttendanceClient({ clinics }: { clinics: Clinic[] }) {
   }
 
   async function loadMonth() {
-    const d = await fetch(`/api/hr/attendance/monthly-summary?clinicId=${clinicId}&month=${month}`).then(r => r.json()).catch(() => []);
+    const [d, s] = await Promise.all([
+      fetch(`/api/hr/attendance/monthly-summary?clinicId=${clinicId}&month=${month}`).then(r => r.json()).catch(() => []),
+      fetch(`/api/hr/attendance/monthly-submission?clinicId=${clinicId}&month=${month}`).then(r => r.json()).catch(() => null),
+    ]);
     setSummary(Array.isArray(d) ? d : []);
+    setSubmission(s && !s.error ? s : null);
   }
 
-  useEffect(() => { if (mode === "day") loadDay(); else loadMonth(); }, [clinicId, date, month, mode]);
+  useEffect(() => { setMsg(""); if (mode === "day") loadDay(); else loadMonth(); }, [clinicId, date, month, mode]);
+
+  async function submitMonth() {
+    if (!confirm(`Submit ${month} attendance for this branch? Records for the month are locked once submitted.`)) return;
+    setBusy(true); setMsg("");
+    const res = await fetch("/api/hr/attendance/monthly-submission", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clinicId, month }),
+    });
+    const d = await res.json().catch(() => ({}));
+    setBusy(false);
+    setMsg(res.ok ? `Attendance for ${month} submitted.` : d.error ?? "Submission failed");
+    loadMonth();
+  }
 
   async function saveStatus(recordId: string, status: string) {
     await fetch(`/api/hr/attendance/${recordId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) });
@@ -73,8 +92,26 @@ export function AttendanceClient({ clinics }: { clinics: Clinic[] }) {
           }
           {mode === "day" && <button onClick={markAllPresent} disabled={busy} className="btn-secondary text-sm">{busy ? "Marking…" : "Mark All Present"}</button>}
           {mode === "month" && <button onClick={exportMonthly} className="btn-secondary text-sm">Export CSV</button>}
+          {mode === "month" && submission?.canSubmit && !submission?.submission && (
+            <button onClick={submitMonth} disabled={busy} className="btn-primary text-sm">{busy ? "Submitting…" : "Submit Month (Head Nurse)"}</button>
+          )}
         </div>
       </div>
+
+      {mode === "month" && submission?.submission && (
+        <div className="p-3 bg-green-50 border border-green-200 rounded text-sm text-green-700">
+          Attendance for {month} submitted by {submission.submission.submittedBy?.name} on{" "}
+          {new Date(submission.submission.submittedAt).toLocaleDateString("en-MY")} — records are locked.
+        </div>
+      )}
+      {mode === "month" && !submission?.submission && !submission?.canSubmit && (
+        <div className="p-3 bg-slate-50 border border-slate-200 rounded text-sm text-slate-600">
+          {submission?.headNurseStaffProfileId
+            ? "Only the branch's designated Head Nurse can submit this month's attendance."
+            : "No Head Nurse designated for this branch — set one in Payroll Settings before the month can be submitted."}
+        </div>
+      )}
+      {msg && <div className="p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-700">{msg}</div>}
 
       {mode === "day" && (
         <div className="card overflow-hidden">
@@ -111,12 +148,12 @@ export function AttendanceClient({ clinics }: { clinics: Clinic[] }) {
         <div className="card overflow-hidden">
           <table className="w-full text-sm">
             <thead className="table-header">
-              <tr>{["Name","Role","Present","Absent","Late","On Leave","PH","OT (hrs)"].map(h => (
+              <tr>{["Name","Role","Present","Absent","Late","On Leave","PH","OT (hrs)","Lunch OT (hrs)"].map(h => (
                 <th key={h} className="px-4 py-3 text-left text-xs text-slate-500 uppercase">{h}</th>
               ))}</tr>
             </thead>
             <tbody>
-              {summary.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400">No attendance data for this month.</td></tr>}
+              {summary.length === 0 && <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">No attendance data for this month.</td></tr>}
               {summary.map((s, i) => (
                 <tr key={i} className="border-t border-slate-100">
                   <td className="px-4 py-2 font-medium">{s.name}</td>
@@ -127,6 +164,7 @@ export function AttendanceClient({ clinics }: { clinics: Clinic[] }) {
                   <td className="px-4 py-2 text-blue-700">{s.onLeave}</td>
                   <td className="px-4 py-2 text-purple-700">{s.publicHoliday}</td>
                   <td className="px-4 py-2 text-slate-600">{(s.overtimeMins / 60).toFixed(1)}</td>
+                  <td className="px-4 py-2 text-slate-600">{((s.lunchOtMins ?? 0) / 60).toFixed(1)}</td>
                 </tr>
               ))}
             </tbody>

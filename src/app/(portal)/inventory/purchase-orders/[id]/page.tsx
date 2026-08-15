@@ -236,18 +236,16 @@ export default function PurchaseOrderDetailPage() {
         </table>
       </div>
 
-      {/* Linked invoices */}
-      {po.stockInvoices?.length > 0 && (
+      {/* Linked invoice — a PO carries at most one supplier invoice */}
+      {po.stockInvoice && (
         <div className="card p-5">
-          <h2 className="font-semibold text-slate-700 mb-3">Linked Supplier Invoices</h2>
+          <h2 className="font-semibold text-slate-700 mb-3">Linked Supplier Invoice</h2>
           <div className="space-y-2">
-            {po.stockInvoices.map((inv: any) => (
-              <div key={inv.id} className="flex items-center justify-between text-sm bg-slate-50 rounded px-3 py-2">
-                <span className="font-mono font-semibold text-slate-800">{inv.invoiceRef}</span>
-                <span className="text-slate-500">{fmt(Number(inv.totalAmount) + Number(inv.sst))}</span>
-                <Link href={`/inventory/stock-invoices/${inv.id}`} className="text-xs text-blue-600 hover:underline">View</Link>
-              </div>
-            ))}
+            <div className="flex items-center justify-between text-sm bg-slate-50 rounded px-3 py-2">
+              <span className="font-mono font-semibold text-slate-800">{po.stockInvoice.invoiceRef}</span>
+              <span className="text-slate-500">{fmt(Number(po.stockInvoice.totalAmount) + Number(po.stockInvoice.sst))}</span>
+              <Link href={`/inventory/stock-invoices/${po.stockInvoice.id}`} className="text-xs text-blue-600 hover:underline">View</Link>
+            </div>
           </div>
         </div>
       )}

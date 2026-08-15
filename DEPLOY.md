@@ -172,6 +172,79 @@ If `RESEND_API_KEY` is blank, commission email sending will silently fail. This 
 
 ---
 
+## Scheduled Jobs (Cron)
+
+`vercel.json` declares the scheduled jobs, including the nightly stock ledger
+drift check (`/api/cron/stock-drift`, 18:00 UTC = 02:00 Malaysia time).
+
+**Required for any of them to run:**
+
+1. **`CRON_SECRET` must be set as a Vercel environment variable.** Every cron
+   route rejects an unauthenticated call with 401. If the variable is unset,
+   the schedule fires but every run is refused and nothing is recorded.
+   Vercel also only *sends* its `Authorization: Bearer` header when this
+   variable exists, so without it the job cannot authenticate by any route.
+2. **The plan must allow seven cron jobs.** `vercel.json` declares seven.
+   Vercel Hobby permits **2 cron jobs, once per day**; Pro permits 40 at any
+   frequency. On Hobby the extra jobs are silently not registered — the
+   deployment succeeds and the job simply never fires. **Verify the count in
+   the Vercel dashboard under Settings → Cron Jobs after deploying: all seven
+   must be listed, including `/api/cron/stock-drift`.**
+3. **`RESEND_API_KEY` must be set** for drift alerts to reach administrators.
+   Without it the check still runs and records its result, but nobody is
+   emailed — the failure is only visible on the Ledger Drift page.
+4. **Timeout.** `/api/cron/stock-drift` sets `maxDuration = 60`. A platform
+   default of 10-15s would abort the scan as the ledger grows, and an aborted
+   run writes no record — a silent miss.
+
+### Header convention — check this before relying on the schedule
+
+Vercel Cron authenticates by sending `Authorization: Bearer $CRON_SECRET`.
+The six pre-existing cron routes in this repo only check a custom
+`x-cron-secret` header, which Vercel does **not** send. If those jobs are
+currently being invoked by Vercel Cron, they are being rejected.
+
+`/api/cron/stock-drift` accepts **both** headers, so it works either way. If
+the other jobs are silently failing, they need the same treatment — check the
+Vercel deployment logs for 401s on the cron paths.
+
+**Unrelated finding, not fixed here:** `/api/cron/leave-digest` checks no
+secret at all. It is publicly callable and sends email to clinic managers on
+each call. It is outside the stock work, so it was left alone deliberately —
+but it should be given the same guard as the other five.
+
+### Confirming the first nightly run
+
+The Ledger Drift page (**Inventory → Ledger Drift**) warns when the schedule
+has never run, or has not run for more than 36 hours. A green "Ledger
+reconciles" result on that page is an *on-demand* check and says nothing about
+whether the schedule is working — the amber banner is the signal to watch.
+
+To confirm without waiting for the night:
+
+```bash
+curl -i -H "x-cron-secret: $CRON_SECRET" https://<your-app>/api/cron/stock-drift
+```
+
+A 200 with `{"status":"SUCCESS", ...}` means it works end to end. A 401 means
+`CRON_SECRET` does not match. After the first real firing, the run appears in
+the page's "Scheduled run history" with trigger `CRON`.
+
+### Running the check without a scheduler
+
+If the deployment cannot run scheduled jobs, run it from any machine with
+database access:
+
+```bash
+npx tsx scripts/stock-drift-check.ts --record   # records an audit row
+npx tsx scripts/stock-drift-check.ts            # ad-hoc, prints only
+```
+
+Wire that into an external scheduler (GitHub Actions on a schedule, a server
+crontab, or a monitoring service hitting the endpoint with the secret header).
+
+---
+
 ## Summary of All Environment Variables for Vercel
 
 ```
@@ -181,6 +254,7 @@ NEXTAUTH_URL=https://your-app.vercel.app
 NEXTAUTH_SECRET=<generate a 32-char random string>
 NEXT_PUBLIC_APP_URL=https://your-app.vercel.app
 RESEND_API_KEY=re_xxxxxxxxxxxx
+CRON_SECRET=<generate a 32-char random string — required for all scheduled jobs>
 ```
 
 ---
@@ -192,8 +266,9 @@ RESEND_API_KEY=re_xxxxxxxxxxxx
 - [ ] Fixed `next.config.js` (`serverExternalPackages`)
 - [ ] Replaced real credentials in `.env.example` with placeholders
 - [ ] Pushed all changes to GitHub
-- [ ] Created Vercel project and set all 6 env vars
+- [ ] Created Vercel project and set all 7 env vars (including `CRON_SECRET`)
 - [ ] Ran `npx prisma migrate deploy` against Neon
 - [ ] Ran `npx prisma db seed` to populate initial data
 - [ ] Updated `NEXTAUTH_URL` to real Vercel URL and redeployed
 - [ ] Tested login at the live URL
+- [ ] Confirmed the nightly drift check runs (Inventory → Ledger Drift shows a run)
